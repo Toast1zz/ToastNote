@@ -44,8 +44,19 @@ pre {
 }
 pre code { padding: 0; background: none; border-radius: 0; }
 img { max-width: 100%; height: auto; border-radius: 6px; break-inside: avoid; }
-table { width: 100%; margin: 0 0 0.8em; border-collapse: collapse; break-inside: avoid; }
-th, td { padding: 4px 8px; border: 1px solid #d2d2d7; text-align: left; }
-th { font-weight: 600; background: rgba(0, 0, 0, 0.03); }
+/* Same look as the editor: a rounded box sized to its content, tinted header, rules between cells. */
+table {
+  margin: 0 0 0.8em;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  overflow: hidden;
+  break-inside: avoid;
+}
+th, td { padding: 4px 12px; text-align: left; vertical-align: top; }
+th + th, td + td { border-left: 1px solid #d2d2d7; }
+tr + tr > td, thead + tbody > tr:first-child > td { border-top: 1px solid #d2d2d7; }
+th { font-weight: 600; background: rgba(0, 0, 0, 0.05); }
 hr { margin: 1.2em 0; border: 0; border-top: 1px solid #d2d2d7; }
 .tag { padding: 0 0.5em; border-radius: 999px; background: rgba(10, 100, 216, 0.12); color: #0a64d8; white-space: nowrap; }
