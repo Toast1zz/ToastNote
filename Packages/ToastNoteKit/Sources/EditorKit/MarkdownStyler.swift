@@ -39,11 +39,16 @@ public struct StyleResult: Equatable, Sendable {
 /// Pure function from the block model and the active blocks to styles, hidden ranges and decorations.
 public enum MarkdownStyler {
     /// - Parameter concealAll: read-only rendering: no block is ever treated as active.
-    public static func style(blocks: [Block], text: NSString, active: IndexSet, concealAll: Bool = false) -> StyleResult {
+    /// - Parameter resolveImage: whether an image source points at a file; images that do not stay visible as
+    ///   muted source text instead of vanishing.
+    public static func style(
+        blocks: [Block], text: NSString, active: IndexSet, concealAll: Bool = false,
+        resolveImage: (String) -> Bool = { _ in true }
+    ) -> StyleResult {
         var result = StyleResult()
         for (index, block) in blocks.enumerated() {
             let isActive = !concealAll && active.contains(index)
-            emit(block, text: text, isActive: isActive, into: &result)
+            emit(block, text: text, isActive: isActive, resolveImage: resolveImage, into: &result)
         }
         emitBlankLines(blocks: blocks, text: text, into: &result)
         return result
@@ -78,7 +83,7 @@ public enum MarkdownStyler {
 
     // MARK: Per block
 
-    private static func emit(_ block: Block, text: NSString, isActive: Bool, into result: inout StyleResult) {
+    private static func emit(_ block: Block, text: NSString, isActive: Bool, resolveImage: (String) -> Bool, into result: inout StyleResult) {
         let base = baseRole(of: block)
 
         switch block.kind {
@@ -133,7 +138,7 @@ public enum MarkdownStyler {
         }
 
         emitBlockSyntax(block, text: text, isActive: isActive, into: &result)
-        emitInlines(block, base: base, isActive: isActive, into: &result)
+        emitInlines(block, base: base, isActive: isActive, resolveImage: resolveImage, into: &result)
 
         switch block.kind {
         case .quote where !isActive:
@@ -211,7 +216,7 @@ public enum MarkdownStyler {
 
     // MARK: Inlines
 
-    private static func emitInlines(_ block: Block, base: TextStyle.Role, isActive: Bool, into result: inout StyleResult) {
+    private static func emitInlines(_ block: Block, base: TextStyle.Role, isActive: Bool, resolveImage: (String) -> Bool, into result: inout StyleResult) {
         let marker = TextStyle(role: .marker)
         let styling = block.inlines.filter {
             switch $0.kind {
@@ -245,7 +250,18 @@ public enum MarkdownStyler {
             case .bareURL:
                 result.runs.append(StyleRun(range: span.range, style: TextStyle(role: .link)))
             case .image(let source):
-                result.decorations.append(.image(source: source, lineRange: block.range))
+                // Only a line that is nothing but an image is drawn as a picture; inside a sentence it stays text.
+                guard block.range == span.range, resolveImage(source) else {
+                    result.runs.append(StyleRun(range: span.range, style: marker))
+                    continue
+                }
+                if !isActive {
+                    // Keep "!" so the line exists (a paragraph of only hidden glyphs gets no line fragment).
+                    result.hidden.append(NSRange(location: span.range.location + 1, length: span.range.length - 1))
+                    result.runs.append(StyleRun(range: NSRange(location: span.range.location, length: 1), style: TextStyle(role: .imagePlaceholder)))
+                    result.decorations.append(.image(source: source, lineRange: block.range))
+                    continue
+                }
             case .tag:
                 result.runs.append(StyleRun(range: span.range, style: TextStyle(role: .tag)))
                 result.decorations.append(.tagPill(span.range))

@@ -103,7 +103,7 @@ struct MainWindow: View {
                         }
                     })
                 }
-                LiveEditorView(session: session, theme: .default) {
+                LiveEditorView(session: session, theme: .default, vaultRoot: model.vaultRoot ?? URL(fileURLWithPath: "/")) {
                     model.activeTextView = $0
                     model.applyPendingHighlight(to: $0)
                 }

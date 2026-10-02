@@ -8,6 +8,8 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     var hidden = IndexSet()
     var decorations: [Decoration] = []
     var theme = EditorTheme.default
+    /// Supplies the image and its display size for an `![](source)` line; set by the text view.
+    var imageProvider: (@MainActor (String) -> (image: NSImage, size: NSSize)?)?
     /// Labelled blocks of the review window: a 2 pt accent bar in the gutter plus a small label.
     var blockLabels: [(range: NSRange, label: String)] = []
 
@@ -209,8 +211,16 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 let text = "属性 · \(count) 项" as NSString
                 let attributes: [NSAttributedString.Key: Any] = theme.attributes(for: TextStyle(role: .frontmatterSummary))
                 text.draw(at: NSPoint(x: origin.x + first.minX, y: origin.y + first.minY), withAttributes: attributes)
-            case .image:
-                break  // Drawn by the image pass (Task 31).
+            case .image(let source, let lineRange):
+                guard intersects(lineRange, visible), let line = lineRects(for: lineRange).first, let provider = imageProvider,
+                      let content = MainActor.assumeIsolated({ provider(source) }) else { continue }
+                // The line is as tall as the picture (plus a margin), so the picture fills its own line.
+                let rect = NSRect(x: 0, y: line.minY + 6, width: content.size.width, height: content.size.height)
+                let target = rect.offsetBy(dx: origin.x, dy: origin.y)
+                NSGraphicsContext.saveGraphicsState()
+                NSBezierPath(roundedRect: target, xRadius: 6, yRadius: 6).addClip()
+                content.image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                NSGraphicsContext.restoreGraphicsState()
             }
         }
     }

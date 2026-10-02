@@ -187,7 +187,7 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
 
     @Test func imageInactiveHidesLineAndAddsDecoration() {
         let result = style("![图](a.png)")
-        #expect(result.hidden == [r(0, 11)])
+        #expect(result.hidden == [r(1, 10)])  // "!" stays as an invisible stand-in so the line exists
         #expect(result.decorations.contains(.image(source: "a.png", lineRange: r(0, 11))))
     }
 

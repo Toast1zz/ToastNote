@@ -3,10 +3,14 @@ import EditorKit
 import SwiftUI
 import VaultKit
 
+extension AttachmentStore: AttachmentSaving {}
+
 /// Hosts the live-preview `MarkdownTextView` for one `NoteSession`.
 struct LiveEditorView: NSViewRepresentable {
     let session: NoteSession
     let theme: EditorTheme
+    /// The vault the note lives in, for finding images and storing pasted ones.
+    let vaultRoot: URL
     /// Reports the hosted text view (or nil on teardown) so commands, AI and search can reach it.
     var onTextViewChange: (MarkdownTextView?) -> Void = { _ in }
 
@@ -19,6 +23,7 @@ struct LiveEditorView: NSViewRepresentable {
         textView.markdown = session.text
         textView.isEditable = session.loadError == nil
         textView.onTextChange = { [session] text in session.userEdited(text) }
+        textView.vaultContext = (vaultRoot, session.path, AttachmentStore(vaultRoot: vaultRoot))
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -38,6 +43,9 @@ struct LiveEditorView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
         textView.isEditable = session.loadError == nil
+        if textView.vaultContext?.notePath != session.path {
+            textView.vaultContext = (vaultRoot, session.path, AttachmentStore(vaultRoot: vaultRoot))
+        }
         if textView.theme.bodySize != theme.bodySize || textView.theme.maxContentWidth != theme.maxContentWidth {
             textView.theme = theme
         }

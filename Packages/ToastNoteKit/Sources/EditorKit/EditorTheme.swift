@@ -9,7 +9,7 @@ public enum BlankLine: Hashable, Sendable {
 
 public struct TextStyle: Hashable, Sendable {
     public enum Role: Hashable, Sendable {
-        case body, heading(Int), codeInline, codeBlock, quote, link, tag, marker, taskDone, frontmatterSummary
+        case body, heading(Int), codeInline, codeBlock, quote, link, tag, marker, taskDone, frontmatterSummary, imagePlaceholder
     }
 
     public var role: Role
@@ -97,6 +97,10 @@ public struct EditorTheme: Sendable {
         case .frontmatterSummary:
             attributes[.font] = NSFont.systemFont(ofSize: bodySize)
             attributes[.foregroundColor] = NSColor.secondaryLabelColor
+        case .imagePlaceholder:
+            // The picture is drawn over this character's line; the character itself must not show.
+            attributes[.font] = NSFont.systemFont(ofSize: 1)
+            attributes[.foregroundColor] = NSColor.clear
         }
         if style.strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
         // CJK fonts have no italic face, so slant the glyphs synthetically.

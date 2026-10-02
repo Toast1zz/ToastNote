@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 /// The live-preview editor: the block under the caret shows raw Markdown, all others show their rendering.
 @MainActor
@@ -45,8 +46,16 @@ public final class MarkdownTextView: NSTextView {
         didSet { publishBlockLabels() }
     }
 
+    /// Where the open note lives, so images can be found and pasted images stored. Nil in read-only panes.
+    public var vaultContext: (root: URL, notePath: String, attachments: AttachmentSaving)? {
+        didSet { restyleAll() }
+    }
+
     /// Ranges currently marked as search matches; cleared by the next edit.
     public private(set) var highlightedRanges: [NSRange] = []
+
+    /// The text width the picture lines were sized for; nil when the note shows no pictures.
+    private var imageLayoutWidth: CGFloat?
 
     private let concealingLayoutManager: ConcealingLayoutManager
     private let concealAll: Bool
@@ -81,6 +90,7 @@ public final class MarkdownTextView: NSTextView {
         typingAttributes = theme.attributes(for: TextStyle(role: .body))
 
         // NSTextView clips its own drawing to the text container, and the label gutter lies outside it.
+        concealingLayoutManager.imageProvider = { [weak self] source in self?.imageForDrawing(source) }
         labelOverlay.textView = self
         labelOverlay.frame = bounds
         labelOverlay.autoresizingMask = [.width, .height]
@@ -127,7 +137,7 @@ public final class MarkdownTextView: NSTextView {
         blocks = BlockParser.parse(string)
         blocksAreStale = false
         activeBlocks = concealAll ? [] : blocks.indices(intersecting: selectedRange())
-        let result = MarkdownStyler.style(blocks: blocks, text: text, active: activeBlocks, concealAll: concealAll)
+        let result = MarkdownStyler.style(blocks: blocks, text: text, active: activeBlocks, concealAll: concealAll, resolveImage: imageExists)
 
         let signatures = makeSignatures(text: text)
         var region = NSRange(location: 0, length: text.length)
@@ -196,6 +206,8 @@ public final class MarkdownTextView: NSTextView {
                 storage.addAttributes(attributes, range: clipped)
             }
         }
+        reserveSpaceForImages(result.decorations, in: range, storage: storage)
+        if range.length == (string as NSString).length { imageLayoutWidth = result.decorations.contains(where: Self.isImage) ? textWidth : nil }
         concealingLayoutManager.hidden = result.hidden.reduce(into: IndexSet()) { set, hidden in
             if hidden.length > 0 { set.insert(integersIn: hidden.location..<NSMaxRange(hidden)) }
         }
@@ -229,7 +241,7 @@ public final class MarkdownTextView: NSTextView {
         guard let union else { return }
         lastInvalidatedRange = union
         let text = string as NSString
-        let result = MarkdownStyler.style(blocks: blocks, text: text, active: activeBlocks, concealAll: false)
+        let result = MarkdownStyler.style(blocks: blocks, text: text, active: activeBlocks, concealAll: false, resolveImage: imageExists)
         apply(result, in: union)
         regionSignatures = makeSignatures(text: text)
     }
@@ -299,9 +311,7 @@ public final class MarkdownTextView: NSTextView {
         return true
     }
 
-    /// Rich text from the web pastes as plain text; the styler then applies the editor's own styles.
-    /// ⌘⇧⌥V keeps its system meaning (spec §7.5).
-    public override var readablePasteboardTypes: [NSPasteboard.PasteboardType] { [.string] }
+    // Rich text from the web pastes as plain text; ⌘⇧⌥V keeps its system meaning (spec §7.5).
 
     // MARK: Tasks and links
 
@@ -434,6 +444,115 @@ public final class MarkdownTextView: NSTextView {
         labelOverlay.needsDisplay = true
     }
 
+    // MARK: Images (spec §10.5)
+
+    private static func isImage(_ decoration: Decoration) -> Bool {
+        if case .image = decoration { return true }
+        return false
+    }
+
+    private func resolvedImageURL(_ source: String) -> URL? {
+        guard let context = vaultContext else { return nil }
+        return ImageResolver.resolve(source, notePath: context.notePath, vaultRoot: context.root)
+    }
+
+    private func imageExists(_ source: String) -> Bool {
+        resolvedImageURL(source) != nil
+    }
+
+    /// Width available to text, from the view's own width (the text container follows it only after layout).
+    private var textWidth: CGFloat {
+        max(bounds.width - 2 * textContainerInset.width - 2 * (textContainer?.lineFragmentPadding ?? 5), 40)
+    }
+
+    /// Display size in points: the picture's natural size (pixels / backing scale), at most the text width.
+    private func displaySize(of url: URL) -> NSSize? {
+        guard let pixels = ImageCache.shared.pixelSize(for: url) else { return nil }
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        let available = textWidth
+        let width = min(pixels.width / scale, available)
+        return NSSize(width: width, height: width * pixels.height / pixels.width)
+    }
+
+    fileprivate func imageForDrawing(_ source: String) -> (image: NSImage, size: NSSize)? {
+        guard let url = resolvedImageURL(source), let size = displaySize(of: url) else { return nil }
+        let scale = window?.backingScaleFactor ?? 2
+        guard let image = ImageCache.shared.thumbnail(for: url, maxPixelWidth: Int(size.width * scale)) else { return nil }
+        return (image, size)
+    }
+
+    /// The picture is drawn inside its own line, which is made as tall as the picture; text layout stays plain
+    /// TextKit 1 (no attachments in the text).
+    private func reserveSpaceForImages(_ decorations: [Decoration], in range: NSRange, storage: NSTextStorage) {
+        let text = string as NSString
+        for case .image(let source, let lineRange) in decorations {
+            guard NSIntersectionRange(lineRange, range).length > 0 || NSLocationInRange(lineRange.location, range),
+                  let url = resolvedImageURL(source), let size = displaySize(of: url),
+                  let existing = storage.attribute(.paragraphStyle, at: lineRange.location, effectiveRange: nil) as? NSParagraphStyle,
+                  let style = existing.mutableCopy() as? NSMutableParagraphStyle else { continue }
+            style.minimumLineHeight = size.height + 12
+            style.maximumLineHeight = size.height + 12
+            let end = min(NSMaxRange(lineRange) + 1, text.length)  // include the line break
+            storage.addAttribute(.paragraphStyle, value: style, range: NSRange(location: lineRange.location, length: end - lineRange.location))
+        }
+    }
+
+    private static let imageTypes: [(NSPasteboard.PasteboardType, UTType)] = [
+        (.png, .png), (.tiff, .tiff), (NSPasteboard.PasteboardType("public.jpeg"), .jpeg), (NSPasteboard.PasteboardType("public.heic"), .heic),
+    ]
+
+    private func imageFileURLs(in pasteboard: NSPasteboard) -> [URL] {
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        return urls.filter { UTType(filenameExtension: $0.pathExtension.lowercased())?.conforms(to: .image) == true }
+    }
+
+    /// Stores pasted or dropped images and inserts `![](path)` at the selection. Returns false when the
+    /// pasteboard holds no image or there is nowhere to store it.
+    private func insertImages(from pasteboard: NSPasteboard) -> Bool {
+        guard let context = vaultContext else { return false }
+        var paths: [String] = []
+        let files = imageFileURLs(in: pasteboard)
+        if !files.isEmpty {
+            for file in files { if let path = try? context.attachments.importFile(file, date: .now) { paths.append(path) } }
+        } else {
+            for (type, uti) in Self.imageTypes {
+                if let data = pasteboard.data(forType: type), let path = try? context.attachments.save(imageData: data, uti: uti, date: .now) {
+                    paths.append(path)
+                    break
+                }
+            }
+        }
+        guard !paths.isEmpty else { return false }
+        let markdown = paths.map { "![](\($0))" }.joined(separator: "\n\n")
+        let range = selectedRange()
+        perform(
+            TextEdit(range: range, replacement: markdown, selectionAfter: NSRange(location: range.location + (markdown as NSString).length, length: 0)),
+            actionName: "插入图片"
+        )
+        return true
+    }
+
+    public override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        var types: [NSPasteboard.PasteboardType] = [.string]
+        if vaultContext != nil { types += Self.imageTypes.map(\.0) + [.fileURL] }
+        return types
+    }
+
+    public override var acceptableDragTypes: [NSPasteboard.PasteboardType] { readablePasteboardTypes }
+
+    /// Image files win over their file name text (Finder puts both on the pasteboard); text wins over image
+    /// data (copied tables carry both); a lone image is stored in the vault.
+    public override func readSelection(from pboard: NSPasteboard) -> Bool {
+        if !imageFileURLs(in: pboard).isEmpty, insertImages(from: pboard) { return true }
+        if pboard.string(forType: .string) == nil, insertImages(from: pboard) { return true }
+        return super.readSelection(from: pboard)
+    }
+
+    public override func readSelection(from pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        if type == .fileURL || Self.imageTypes.contains(where: { $0.0 == type }), insertImages(from: pboard) { return true }
+        return super.readSelection(from: pboard, type: type)
+    }
+
     // MARK: Search highlights
 
     /// Marks ranges as search matches with temporary attributes, so nothing is written into the text or file.
@@ -495,6 +614,8 @@ public final class MarkdownTextView: NSTextView {
     public override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         updateLayoutInsets()
+        // Picture lines are as tall as the pictures, which depend on the text width.
+        if let sized = imageLayoutWidth, abs(sized - textWidth) > 1 { restyleAll() }
     }
 
     public override func viewDidMoveToSuperview() {
