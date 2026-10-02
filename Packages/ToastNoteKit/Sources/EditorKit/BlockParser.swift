@@ -196,20 +196,30 @@ private struct Converter {
         return block
     }
 
-    private func collectInlines(_ markup: Markup, into spans: inout [InlineSpan]) {
+    /// The raw range cmark-gfm reported for a styled span and the text inside its markers.
+    private typealias StyledParent = (raw: NSRange, inner: NSRange)
+
+    private func collectInlines(_ markup: Markup, into spans: inout [InlineSpan], parent: StyledParent? = nil) {
         for child in markup.children {
-            guard let childRange = range(of: child) else { continue }
+            guard let rawRange = range(of: child) else { continue }
+            // For `***x***` cmark-gfm reports the same range for the emphasis and the strong inside it;
+            // the inner span really starts after the outer span's markers.
+            var childRange = rawRange
+            if let parent, rawRange == parent.raw, child is Strong || child is Emphasis || child is Strikethrough {
+                childRange = parent.inner
+            }
             switch child {
             case is Strong:
-                spans.append(InlineSpan(kind: .strong, range: childRange, syntaxRanges: wrapped(childRange, marker: 2)))
-                collectInlines(child, into: &spans)
+                let syntax = wrapped(childRange, marker: 2)
+                spans.append(InlineSpan(kind: .strong, range: childRange, syntaxRanges: syntax))
+                collectInlines(child, into: &spans, parent: (rawRange, innerOf(childRange, marker: 2)))
             case is Emphasis:
                 spans.append(InlineSpan(kind: .emphasis, range: childRange, syntaxRanges: wrapped(childRange, marker: 1)))
-                collectInlines(child, into: &spans)
+                collectInlines(child, into: &spans, parent: (rawRange, innerOf(childRange, marker: 1)))
             case is Strikethrough:
                 let marker = substring(NSRange(location: childRange.location, length: min(2, childRange.length))) == "~~" ? 2 : 1
                 spans.append(InlineSpan(kind: .strikethrough, range: childRange, syntaxRanges: wrapped(childRange, marker: marker)))
-                collectInlines(child, into: &spans)
+                collectInlines(child, into: &spans, parent: (rawRange, innerOf(childRange, marker: marker)))
             case is InlineCode:
                 var ticks = 0
                 while ticks < childRange.length, full.character(at: childRange.location + ticks) == 0x60 { ticks += 1 }
@@ -233,6 +243,10 @@ private struct Converter {
                 collectInlines(child, into: &spans)
             }
         }
+    }
+
+    private func innerOf(_ range: NSRange, marker: Int) -> NSRange {
+        NSRange(location: range.location + marker, length: max(range.length - marker * 2, 0))
     }
 
     private func wrapped(_ range: NSRange, marker: Int) -> [NSRange] {

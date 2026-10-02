@@ -36,6 +36,14 @@ private func r(_ location: Int, _ length: Int) -> NSRange { NSRange(location: lo
         #expect(inlines[2].syntaxRanges == [r(10, 1), r(12, 1)])
     }
 
+    @Test func nestedStrongInEmphasisGetsDistinctRanges() {
+        // cmark-gfm reports the same range for both; the inner span must start after the outer markers.
+        let inlines = BlockParser.parse("***x***")[0].inlines
+        let strong = inlines.first { $0.kind == .strong }
+        #expect(strong?.range == r(1, 5))
+        #expect(strong?.syntaxRanges == [r(1, 2), r(4, 2)])
+    }
+
     @Test func link() {
         let inline = BlockParser.parse("[文字](https://x.y)")[0].inlines
         #expect(inline.count == 1)
