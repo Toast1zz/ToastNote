@@ -85,6 +85,7 @@ public struct EditorTheme: Sendable, Equatable {
             let weight: NSFont.Weight = level == 1 ? .bold : .semibold
             attributes[.font] = font(size: headingSize(level), weight: weight, style: style)
             attributes[.foregroundColor] = NSColor.labelColor
+            if level == 1 { attributes[.kern] = -0.01 * headingSize(1) }  // -0.01 em, spec §9.3
         case .codeInline, .codeBlock:
             attributes[.font] = NSFont.monospacedSystemFont(ofSize: codeSize, weight: style.bold ? .bold : .regular)
             attributes[.foregroundColor] = NSColor.labelColor
