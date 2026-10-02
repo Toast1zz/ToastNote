@@ -18,6 +18,20 @@ public final class MarkdownTextView: NSTextView {
 
     /// Union of the blocks whose glyphs were invalidated by the last caret move; nil when none changed.
     private(set) var lastInvalidatedRange: NSRange?
+    /// The text range the last parse + style pass wrote attributes to; nil when nothing needed writing.
+    private(set) var lastRestyledRange: NSRange?
+    /// One entry per block (plus the tail after the last block) describing everything that decides how it
+    /// looks; comparing two passes shows which part of the document needs new attributes.
+    private var regionSignatures: [RegionSignature] = []
+    /// True between the moment the text is about to change and the restyle that follows. The selection
+    /// moves during that window, but `blocks` still describe the old text, so it must not be used.
+    private var blocksAreStale = false
+
+    private struct RegionSignature: Equatable {
+        /// Where the region starts: the end of the previous block, so blank lines belong to the next block.
+        var start: Int
+        var hash: Int
+    }
     /// Decorations to draw (Task 13).
     private(set) var decorations: [Decoration] = []
 
@@ -62,6 +76,7 @@ public final class MarkdownTextView: NSTextView {
     public var markdown: String {
         get { string }
         set {
+            blocksAreStale = true
             undoManager?.disableUndoRegistration()
             string = newValue
             undoManager?.enableUndoRegistration()
@@ -72,17 +87,74 @@ public final class MarkdownTextView: NSTextView {
 
     // MARK: Restyling
 
+    /// Full pass: used when the whole document or the theme changes.
     public func restyleAll() {
+        restyle(incremental: false)
+    }
+
+    /// After an edit only the part of the document whose blocks changed gets new attributes. Attributes
+    /// travel with the text, so unchanged blocks before and after the edit keep theirs.
+    private func restyleAfterEdit() {
+        restyle(incremental: true)
+    }
+
+    private func restyle(incremental: Bool) {
         let signpost = EditorSignposts.signposter
         let state = signpost.beginInterval("restyle")
         defer { signpost.endInterval("restyle", state) }
 
         let text = string as NSString
         blocks = BlockParser.parse(string)
+        blocksAreStale = false
         activeBlocks = concealAll ? [] : blocks.indices(intersecting: selectedRange())
         let result = MarkdownStyler.style(blocks: blocks, text: text, active: activeBlocks, concealAll: concealAll)
-        apply(result, in: NSRange(location: 0, length: text.length))
+
+        let signatures = makeSignatures(text: text)
+        var region = NSRange(location: 0, length: text.length)
+        if incremental, let changed = changedRegion(old: regionSignatures, new: signatures, textLength: text.length) {
+            region = changed
+        } else if incremental, regionSignatures.count == signatures.count {
+            // Nothing that affects appearance changed (for example an edit inside a hidden marker).
+            region = NSRange(location: 0, length: 0)
+        }
+        regionSignatures = signatures
+        lastRestyledRange = region.length > 0 ? region : nil
+        apply(result, in: region)
         restyleCount += 1
+    }
+
+    private func makeSignatures(text: NSString) -> [RegionSignature] {
+        var signatures: [RegionSignature] = []
+        // A region starts after the previous block's line break, so that break is restyled with that block.
+        var previousEnd = 0
+        for (index, block) in blocks.enumerated() {
+            var hasher = Hasher()
+            hasher.combine(block.kind)
+            hasher.combine(!concealAll && activeBlocks.contains(index))
+            hasher.combine(text.substring(with: NSRange(location: previousEnd, length: max(block.range.location - previousEnd, 0))))
+            hasher.combine(text.substring(with: block.range))
+            signatures.append(RegionSignature(start: previousEnd, hash: hasher.finalize()))
+            previousEnd = min(NSMaxRange(block.range) + 1, text.length)
+        }
+        var tail = Hasher()
+        tail.combine(text.substring(from: min(previousEnd, text.length)))
+        signatures.append(RegionSignature(start: previousEnd, hash: tail.finalize()))
+        return signatures
+    }
+
+    /// The range between the common prefix and suffix of two signature lists; nil when there is no
+    /// previous pass or the lists differ in a way that cannot be localized.
+    private func changedRegion(old: [RegionSignature], new: [RegionSignature], textLength: Int) -> NSRange? {
+        guard !old.isEmpty else { return nil }
+        var prefix = 0
+        while prefix < min(old.count, new.count), old[prefix].hash == new[prefix].hash { prefix += 1 }
+        if prefix == old.count && prefix == new.count { return NSRange(location: 0, length: 0) }
+        var suffix = 0
+        while suffix < min(old.count, new.count) - prefix,
+              old[old.count - 1 - suffix].hash == new[new.count - 1 - suffix].hash { suffix += 1 }
+        let start = prefix < new.count ? new[prefix].start : textLength
+        let end = suffix > 0 ? new[new.count - suffix].start : textLength
+        return NSRange(location: min(start, end), length: max(end - start, 0))
     }
 
     /// Writes styles for `range` and publishes the hidden set. Attribute-only edits never touch undo.
@@ -93,17 +165,25 @@ public final class MarkdownTextView: NSTextView {
 
         let base = theme.attributes(for: TextStyle(role: .body))
         storage.beginEditing()
-        storage.setAttributes(base, range: range)
-        for run in result.runs {
-            let clipped = NSIntersectionRange(run.range, range)
-            if clipped.length > 0 { storage.addAttributes(theme.attributes(for: run.style), range: clipped) }
+        if range.length > 0 {
+            storage.setAttributes(base, range: range)
+            var cache: [TextStyle: [NSAttributedString.Key: Any]] = [:]
+            for run in result.runs {
+                let clipped = NSIntersectionRange(run.range, range)
+                guard clipped.length > 0 else { continue }
+                let attributes = cache[run.style] ?? theme.attributes(for: run.style)
+                cache[run.style] = attributes
+                storage.addAttributes(attributes, range: clipped)
+            }
         }
         concealingLayoutManager.hidden = result.hidden.reduce(into: IndexSet()) { set, hidden in
             if hidden.length > 0 { set.insert(integersIn: hidden.location..<NSMaxRange(hidden)) }
         }
         storage.endEditing()
-        concealingLayoutManager.invalidateGlyphs(forCharacterRange: range, changeInLength: 0, actualCharacterRange: nil)
-        concealingLayoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+        if range.length > 0 {
+            concealingLayoutManager.invalidateGlyphs(forCharacterRange: range, changeInLength: 0, actualCharacterRange: nil)
+            concealingLayoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+        }
         decorations = result.decorations
         concealingLayoutManager.decorations = result.decorations
         concealingLayoutManager.theme = theme
@@ -113,7 +193,7 @@ public final class MarkdownTextView: NSTextView {
 
     /// Caret moved: only blocks whose active state changed need new glyphs and attributes.
     private func updateActiveBlocks() {
-        guard !concealAll, !hasMarkedText() else { return }
+        guard !concealAll, !hasMarkedText(), !blocksAreStale else { return }
         let newActive = blocks.indices(intersecting: selectedRange())
         guard newActive != activeBlocks else {
             lastInvalidatedRange = nil
@@ -130,6 +210,7 @@ public final class MarkdownTextView: NSTextView {
         let text = string as NSString
         let result = MarkdownStyler.style(blocks: blocks, text: text, active: activeBlocks, concealAll: false)
         apply(result, in: union)
+        regionSignatures = makeSignatures(text: text)
     }
 
     // MARK: Editing commands (spec §7.5)
@@ -318,11 +399,17 @@ public final class MarkdownTextView: NSTextView {
 
     // MARK: NSTextView overrides
 
+    public override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        let allowed = super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
+        if allowed { blocksAreStale = true }
+        return allowed
+    }
+
     public override func didChangeText() {
         super.didChangeText()
         // Restyling while an input method is composing breaks its candidate window (spec §7.4).
         guard !hasMarkedText() else { return }
-        restyleAll()
+        restyleAfterEdit()
         onTextChange?(string)
     }
 

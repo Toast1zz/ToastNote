@@ -1,3 +1,4 @@
+import EditorKit
 import SwiftUI
 import VaultKit
 
@@ -19,6 +20,8 @@ struct MainWindow: View {
             }
         }
         .frame(minWidth: 640, minHeight: 420)
+        // Until session restore exists (M3) the window itself is the first interactive state.
+        .onAppear { LaunchTiming.editorReady() }
         .alert("出错了", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
@@ -58,7 +61,7 @@ struct MainWindow: View {
         if let session = model.currentSession {
             VStack(spacing: 0) {
                 SessionBannerView(session: session)
-                PlainEditorView(session: session)
+                LiveEditorView(session: session, theme: .default) { model.activeTextView = $0 }
             }
             .id(ObjectIdentifier(session))
             .navigationTitle(((session.path as NSString).lastPathComponent as NSString).deletingPathExtension)

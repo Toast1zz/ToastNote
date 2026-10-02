@@ -1,12 +1,12 @@
 import Foundation
 
-public enum BlockKind: Equatable, Sendable {
+public enum BlockKind: Hashable, Sendable {
     case paragraph, heading(level: Int), quote, codeBlock(language: String?), table, thematicBreak, frontmatter
     /// Each list item is its own block (spec §7.2).
     case listItem(ordered: Bool, task: TaskState?, depth: Int)
 }
 
-public enum TaskState: Equatable, Sendable { case open, done }
+public enum TaskState: Hashable, Sendable { case open, done }
 
 public enum InlineKind: Equatable, Sendable {
     case strong, emphasis, strikethrough, inlineCode

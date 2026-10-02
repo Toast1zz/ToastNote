@@ -10,15 +10,24 @@ public struct TextStyle: Hashable, Sendable {
     public var bold = false
     public var italic = false
     public var strikethrough = false
-    /// Bullet and task items reserve a gutter in front of the text for the drawn bullet or checkbox.
-    public var listIndent = false
+    /// Bullet and task items reserve a gutter (one per nesting level) in front of the text for the drawn bullet or checkbox.
+    public var listDepth: Int?
+    /// List items sit closer together than paragraphs.
+    public var tightSpacing = false
+    /// A blank line between blocks; kept short so it does not double the paragraph gap.
+    public var blankLine = false
 
-    public init(role: Role, bold: Bool = false, italic: Bool = false, strikethrough: Bool = false, listIndent: Bool = false) {
+    public init(
+        role: Role, bold: Bool = false, italic: Bool = false, strikethrough: Bool = false,
+        listDepth: Int? = nil, tightSpacing: Bool = false, blankLine: Bool = false
+    ) {
         self.role = role
         self.bold = bold
         self.italic = italic
         self.strikethrough = strikethrough
-        self.listIndent = listIndent
+        self.listDepth = listDepth
+        self.tightSpacing = tightSpacing
+        self.blankLine = blankLine
     }
 }
 
@@ -76,6 +85,8 @@ public struct EditorTheme: Sendable {
             attributes[.foregroundColor] = NSColor.secondaryLabelColor
         }
         if style.strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        // CJK fonts have no italic face, so slant the glyphs synthetically.
+        if style.italic { attributes[.obliqueness] = 0.2 }
         // Markers inherit the paragraph style of the content they sit next to.
         if style.role != .marker { attributes[.paragraphStyle] = paragraphStyle(for: style) }
         return attributes
@@ -90,6 +101,11 @@ public struct EditorTheme: Sendable {
     /// Line height and spacing live in NSParagraphStyle, never in extra blank lines (spec §9.3).
     func paragraphStyle(for style: TextStyle) -> NSParagraphStyle {
         let paragraph = NSMutableParagraphStyle()
+        if style.blankLine {
+            paragraph.minimumLineHeight = 0.5 * bodySize
+            paragraph.maximumLineHeight = 0.5 * bodySize
+            return paragraph
+        }
         switch style.role {
         case .heading(let level):
             let (before, after): (CGFloat, CGFloat) = switch level {
@@ -116,10 +132,10 @@ public struct EditorTheme: Sendable {
             paragraph.headIndent = quoteIndent
         default:
             paragraph.lineHeightMultiple = 1.75
-            paragraph.paragraphSpacing = 0.6 * bodySize
-            if style.listIndent {
-                paragraph.firstLineHeadIndent = listGutter
-                paragraph.headIndent = listGutter
+            paragraph.paragraphSpacing = (style.tightSpacing ? 0.2 : 0.6) * bodySize
+            if let depth = style.listDepth {
+                paragraph.firstLineHeadIndent = listGutter * CGFloat(depth + 1)
+                paragraph.headIndent = listGutter * CGFloat(depth + 1)
             }
         }
         return paragraph

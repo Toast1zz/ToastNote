@@ -1,4 +1,5 @@
 import AppKit
+import EditorKit
 import Observation
 import SwiftUI
 import VaultKit
@@ -14,6 +15,9 @@ final class AppModel {
     var selection: String?
     var columnVisibility: NavigationSplitViewVisibility = .all
     var errorMessage: String?
+
+    /// The editor of the open note, for commands, AI formatting and search highlights.
+    @ObservationIgnored weak var activeTextView: MarkdownTextView?
 
     @ObservationIgnored private let registry = SelfWriteRegistry()
     @ObservationIgnored private var watcher: VaultWatcher?

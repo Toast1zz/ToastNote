@@ -55,7 +55,7 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
         .init(name: "quote inactive", text: "> 引用", caret: nil,
               hidden: [r(0, 2)], runs: [(r(2, 2), .quote)]),
         .init(name: "fence inactive", text: "```swift\nlet x\n```", caret: nil,
-              hidden: [r(0, 8), r(15, 3)], runs: [(r(9, 5), .codeBlock)]),
+              hidden: [r(0, 9), r(14, 4)], runs: [(r(9, 5), .codeBlock)]),
         .init(name: "fence active", text: "```swift\nlet x\n```", caret: 10,
               hidden: [], runs: [(r(0, 8), .marker), (r(15, 3), .marker), (r(9, 5), .codeBlock)]),
         .init(name: "rule inactive", text: "a\n\n---", caret: 0,
@@ -98,9 +98,36 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
         #expect(result.run(r(0, 5), role: .heading(2)) != nil)
     }
 
+    @Test func blankLinesBetweenBlocksAreCompact() {
+        // Blank lines are real empty paragraphs; left alone they would double every paragraph gap.
+        let result = style("a\n\n\nb")
+        let blanks = result.runs.filter { $0.style.blankLine }.map(\.range)
+        #expect(blanks == [r(2, 1), r(3, 1)])
+    }
+
+    @Test func noBlankRunsBetweenListItemsOrAfterNestedMarkers() {
+        #expect(style("- a\n- b\n  - c").runs.allSatisfy { !$0.style.blankLine })
+    }
+
+    @Test func listItemsUseTightSpacing() {
+        #expect(style("1. 一\n2. 二").runs.contains { $0.style.tightSpacing })
+        #expect(!style("段落").runs.contains { $0.style.tightSpacing })
+    }
+
+    @Test func nestedBulletHidesSourceIndentAndIndentsByDepth() {
+        let text = "- a\n  - b"
+        let result = style(text)
+        #expect(result.hidden.contains(r(4, 2)))                  // the two source spaces
+        #expect(result.runs.contains { $0.range == r(4, 5) && $0.style.listDepth == 1 })
+        // The caret inside the item shows the source indentation, so the paragraph indent drops to one gutter.
+        let active = style(text, caret: 7)
+        #expect(!active.hidden.contains(r(4, 2)))
+        #expect(active.runs.contains { $0.range == r(4, 5) && $0.style.listDepth == 0 })
+    }
+
     @Test func bulletItemsReserveAGutterButOrderedItemsDoNot() {
-        #expect(style("- 项").runs.contains { $0.range == r(0, 3) && $0.style.listIndent })
-        #expect(!style("1. 项").runs.contains { $0.style.listIndent })
+        #expect(style("- 项").runs.contains { $0.range == r(0, 3) && $0.style.listDepth != nil })
+        #expect(!style("1. 项").runs.contains { $0.style.listDepth != nil })
     }
 
     @Test func bulletDecoration() {

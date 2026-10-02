@@ -45,7 +45,29 @@ public enum MarkdownStyler {
             let isActive = !concealAll && active.contains(index)
             emit(block, text: text, isActive: isActive, into: &result)
         }
+        emitBlankLines(blocks: blocks, text: text, into: &result)
         return result
+    }
+
+    /// Blank lines are real empty paragraphs; give them a short line so they do not double paragraph gaps.
+    private static func emitBlankLines(blocks: [Block], text: NSString, into result: inout StyleResult) {
+        var cursor = 0
+        func scan(upTo end: Int) {
+            var index = cursor
+            while index < min(end, text.length) {
+                // A blank line is a newline that starts its line.
+                if text.character(at: index) == 0x0A, index == 0 || text.character(at: index - 1) == 0x0A {
+                    result.runs.append(StyleRun(range: NSRange(location: index, length: 1), style: TextStyle(role: .body, blankLine: true)))
+                }
+                index += 1
+            }
+        }
+        for block in blocks.sorted(by: { $0.range.location < $1.range.location }) {
+            scan(upTo: block.range.location)
+            // Skip the block's own line terminator.
+            cursor = max(cursor, NSMaxRange(block.range) + 1)
+        }
+        scan(upTo: text.length)
     }
 
     // MARK: Per block
@@ -59,13 +81,9 @@ public enum MarkdownStyler {
                 result.runs.append(StyleRun(range: block.range, style: TextStyle(role: .codeInline)))
             } else {
                 result.hidden.append(block.range)
-                let firstLine = text.lineRange(for: NSRange(location: block.range.location, length: 0))
-                var lineEnd = firstLine
-                var contentsEnd = 0
-                var start = 0
-                var end = 0
+                var start = 0, end = 0, contentsEnd = 0
                 text.getLineStart(&start, end: &end, contentsEnd: &contentsEnd, for: NSRange(location: block.range.location, length: 0))
-                lineEnd = NSRange(location: start, length: contentsEnd - start)
+                let lineEnd = NSRange(location: start, length: contentsEnd - start)
                 result.decorations.append(.frontmatterSummary(count: frontmatterKeyCount(block.range, text: text), lineRange: lineEnd))
             }
             return
@@ -86,16 +104,29 @@ public enum MarkdownStyler {
 
         // Paragraph-level attributes (spacing, indents) come from a paragraph's first character, which is
         // often a marker, so the base style covers the whole block, not just its visible content.
-        var listIndent = false
-        if case .listItem(let ordered, _, _) = block.kind { listIndent = !ordered }
-        if block.range.length > 0 {
-            result.runs.append(StyleRun(range: block.range, style: TextStyle(role: base, listIndent: listIndent)))
+        var listDepth: Int?
+        var isListItem = false
+        var runRange = block.range
+        if case .listItem(let ordered, _, let depth) = block.kind {
+            isListItem = true
+            if !ordered {
+                // Inactive bullets are indented by paragraph style, so the source indentation is hidden. The
+                // indentation joins the block run so the paragraph style starts at the line's first character.
+                let lead = leadingWhitespace(before: block.range.location, in: text)
+                runRange = NSRange(location: lead.location, length: NSMaxRange(block.range) - lead.location)
+                listDepth = isActive ? 0 : depth
+                if !isActive, lead.length > 0 { result.hidden.append(lead) }
+            }
+        }
+        let blockStyle = TextStyle(role: base, listDepth: listDepth, tightSpacing: isListItem)
+        if runRange.length > 0 {
+            result.runs.append(StyleRun(range: runRange, style: blockStyle))
         }
         for segment in contentSegments(of: block) where segment.length > 0 {
-            result.runs.append(StyleRun(range: segment, style: TextStyle(role: base, listIndent: listIndent)))
+            result.runs.append(StyleRun(range: segment, style: blockStyle))
         }
 
-        emitBlockSyntax(block, isActive: isActive, into: &result)
+        emitBlockSyntax(block, text: text, isActive: isActive, into: &result)
         emitInlines(block, base: base, isActive: isActive, into: &result)
 
         switch block.kind {
@@ -125,7 +156,7 @@ public enum MarkdownStyler {
         return [block.contentRange]
     }
 
-    private static func emitBlockSyntax(_ block: Block, isActive: Bool, into result: inout StyleResult) {
+    private static func emitBlockSyntax(_ block: Block, text: NSString, isActive: Bool, into result: inout StyleResult) {
         let marker = TextStyle(role: .marker)
         var hideMarkers = !isActive
         var decoration: Decoration?
@@ -138,14 +169,38 @@ public enum MarkdownStyler {
                 decoration = task.map { .checkbox(at: syntax.location, done: $0 == .done) } ?? .bullet(at: syntax.location, depth: depth)
             }
         }
-        for syntax in block.syntaxRanges where syntax.length > 0 {
+        for (index, syntax) in block.syntaxRanges.enumerated() where syntax.length > 0 {
             if hideMarkers {
-                result.hidden.append(syntax)
+                result.hidden.append(fenceAware(syntax, index: index, block: block, text: text))
             } else if isActive {
                 result.runs.append(StyleRun(range: syntax, style: marker))
             }
         }
         if let decoration { result.decorations.append(decoration) }
+    }
+
+    /// Fence lines are hidden together with their line break, or they would leave empty lines inside the block.
+    private static func fenceAware(_ syntax: NSRange, index: Int, block: Block, text: NSString) -> NSRange {
+        guard case .codeBlock = block.kind else { return syntax }
+        var hidden = syntax
+        if index == 0, NSMaxRange(syntax) < text.length, text.character(at: NSMaxRange(syntax)) == 0x0A {
+            hidden.length += 1
+        } else if index == 1, syntax.location > 0, text.character(at: syntax.location - 1) == 0x0A {
+            hidden.location -= 1
+            hidden.length += 1
+        }
+        return hidden
+    }
+
+    /// The spaces and tabs between the start of the line and `location`.
+    private static func leadingWhitespace(before location: Int, in text: NSString) -> NSRange {
+        var start = location
+        while start > 0 {
+            let previous = text.character(at: start - 1)
+            guard previous == 0x20 || previous == 0x09 else { break }
+            start -= 1
+        }
+        return NSRange(location: start, length: location - start)
     }
 
     // MARK: Inlines

@@ -40,6 +40,20 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         return glyphRange.length
     }
 
+    /// Keeps `hidden` aligned with the text while an edit is processed. AppKit may generate glyphs for the
+    /// shifted text before the view has restyled; with stale indices the wrong characters would be hidden.
+    override func processEditing(
+        for textStorage: NSTextStorage, edited editMask: NSTextStorageEditActions, range newCharRange: NSRange,
+        changeInLength delta: Int, invalidatedRange invalidatedCharRange: NSRange
+    ) {
+        if editMask.contains(.editedCharacters), !hidden.isEmpty {
+            let oldEnd = newCharRange.location + newCharRange.length - delta
+            hidden.remove(integersIn: newCharRange.location..<max(oldEnd, newCharRange.location))
+            hidden.shift(startingAt: max(oldEnd, newCharRange.location), by: delta)
+        }
+        super.processEditing(for: textStorage, edited: editMask, range: newCharRange, changeInLength: delta, invalidatedRange: invalidatedCharRange)
+    }
+
     // MARK: Geometry (text container coordinates)
 
     /// Line fragments covering `characterRange`, as used rects.
@@ -56,21 +70,27 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         return rects
     }
 
-    private var containerWidth: CGFloat { textContainers.first?.size.width ?? 0 }
-
-    /// X position of the text that follows a hidden marker, in container coordinates.
-    func textStartX(afterMarkerAt characterIndex: Int) -> CGFloat {
-        let glyph = glyphIndexForCharacter(at: characterIndex)
-        return location(forGlyphAt: glyph).x + lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minX
-    }
-
-    /// Where a bullet or checkbox for the marker at `characterIndex` is drawn, in container coordinates.
+    /// Where a bullet or checkbox for the hidden marker at `characterIndex` is drawn, in container
+    /// coordinates: just left of the first visible character after the marker, centered on the x-height.
+    /// (Positions of hidden `.null` glyphs are not reliable, so the visible glyph is used.)
     func gutterRect(forMarkerAt characterIndex: Int, size: CGFloat) -> NSRect {
-        let glyph = glyphIndexForCharacter(at: characterIndex)
-        let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
-        let x = textStartX(afterMarkerAt: characterIndex) - size - 0.3 * theme.bodySize
-        return NSRect(x: x, y: used.midY - size / 2, width: size, height: size)
+        let markerEnd = hidden.rangeView.first { $0.contains(characterIndex) }?.upperBound ?? characterIndex + 1
+        guard numberOfGlyphs > 0 else { return .zero }
+        let glyph = min(glyphIndexForCharacter(at: markerEnd), numberOfGlyphs - 1)
+        let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let position = location(forGlyphAt: glyph)
+        let textX = fragment.minX + position.x
+        let baseline = fragment.minY + position.y
+        return NSRect(
+            x: textX - size - 0.3 * theme.bodySize,
+            y: baseline - 0.35 * theme.bodySize - size / 2,
+            width: size, height: size
+        )
     }
+
+    /// Light wash of the label color; adapts to dark mode (spec §9.4 calls for the quaternary label at 50%,
+    /// which `withAlphaComponent` would turn into an opaque-looking gray).
+    static var codeWash: NSColor { NSColor.labelColor.withAlphaComponent(0.07) }
 
     // MARK: Drawing
 
@@ -87,7 +107,7 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 let rects = lineRects(for: range)
                 guard let first = rects.first, let last = rects.last else { continue }
                 let rect = NSRect(x: 0, y: first.minY - 6, width: container.size.width, height: last.maxY - first.minY + 12)
-                fill(rect, origin: origin, radius: 6, color: NSColor.quaternaryLabelColor.withAlphaComponent(0.5))
+                fill(rect, origin: origin, radius: 6, color: Self.codeWash)
             case .codeLanguage(let language, let range):
                 guard intersects(range, visible), let first = lineRects(for: range).first else { continue }
                 let attributes: [NSAttributedString.Key: Any] = [
@@ -101,7 +121,7 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             case .inlineCodeBackground(let range):
                 guard intersects(range, visible) else { continue }
                 for rect in enclosingRects(for: range) {
-                    fill(rect.insetBy(dx: -2, dy: 1), origin: origin, radius: 4, color: NSColor.quaternaryLabelColor.withAlphaComponent(0.5))
+                    fill(rect.insetBy(dx: -2, dy: 1), origin: origin, radius: 4, color: Self.codeWash)
                 }
             case .tagPill(let range):
                 guard intersects(range, visible) else { continue }
@@ -163,12 +183,10 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     private func drawBullet(markerAt index: Int, origin: NSPoint) {
         let size = theme.bodySize
         let rect = gutterRect(forMarkerAt: index, size: size).offsetBy(dx: origin.x, dy: origin.y)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.secondaryLabelColor,
-        ]
-        let glyph = "•" as NSString
-        let glyphSize = glyph.size(withAttributes: attributes)
-        glyph.draw(at: NSPoint(x: rect.midX - glyphSize.width / 2, y: rect.midY - glyphSize.height / 2), withAttributes: attributes)
+        let diameter = size * 0.3
+        NSColor.secondaryLabelColor.setFill()
+        // The dot sits in the right half of the gutter, next to the text.
+        NSBezierPath(ovalIn: NSRect(x: rect.maxX - diameter - 2, y: rect.midY - diameter / 2, width: diameter, height: diameter)).fill()
     }
 
     private func drawCheckbox(markerAt index: Int, done: Bool, origin: NSPoint) {
@@ -176,8 +194,10 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         let rect = gutterRect(forMarkerAt: index, size: size).offsetBy(dx: origin.x, dy: origin.y)
         let name = done ? "checkmark.square.fill" : "square"
         guard let image = NSImage(systemSymbolName: name, accessibilityDescription: done ? "已完成" : "未完成") else { return }
+        // Palette: the first color is the checkmark, the second the filled square.
+        let colors: [NSColor] = done ? [.white, .controlAccentColor] : [.secondaryLabelColor]
         let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
-            .applying(.init(paletteColors: [done ? NSColor.controlAccentColor : NSColor.secondaryLabelColor]))
+            .applying(.init(paletteColors: colors))
         image.withSymbolConfiguration(configuration)?.draw(in: rect)
     }
 }

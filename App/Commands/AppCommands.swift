@@ -1,7 +1,16 @@
+import AppKit
+import EditorKit
 import SwiftUI
 
 struct AppCommands: Commands {
     let model: AppModel
+
+    /// Menu item that forwards to the focused editor through the responder chain.
+    private func formatButton(_ title: String, key: KeyEquivalent, modifiers: EventModifiers, action: Selector) -> some View {
+        Button(title) { NSApp.sendAction(action, to: nil, from: nil) }
+            .keyboardShortcut(key, modifiers: modifiers)
+            .disabled(model.currentSession == nil)
+    }
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -15,6 +24,13 @@ struct AppCommands: Commands {
             Button("保存") { model.saveNow() }
                 .keyboardShortcut("s")
                 .disabled(model.currentSession == nil)
+        }
+        CommandMenu("格式") {
+            formatButton("粗体", key: "b", modifiers: .command, action: #selector(MarkdownTextView.toggleBold(_:)))
+            formatButton("斜体", key: "i", modifiers: .command, action: #selector(MarkdownTextView.toggleItalic(_:)))
+            formatButton("删除线", key: "x", modifiers: [.command, .shift], action: #selector(MarkdownTextView.toggleStrikethrough(_:)))
+            formatButton("行内代码", key: "e", modifiers: .command, action: #selector(MarkdownTextView.toggleInlineCode(_:)))
+            formatButton("插入链接", key: "k", modifiers: .command, action: #selector(MarkdownTextView.insertMarkdownLink(_:)))
         }
         CommandGroup(replacing: .sidebar) {
             Button("显示或隐藏侧边栏") {
