@@ -8,9 +8,12 @@ import VaultKit
 final class AppModel {
     private(set) var vaultRoot: URL?
     private(set) var tree = FolderNode(path: "", name: "")
+    private(set) var workspace = WorkspaceState()
     private(set) var currentSession: NoteSession?
     private(set) var recentVaults: [URL] = []
     var expandedFolders: Set<String> = []
+    /// Sidebar sections the user collapsed ("置顶", "已打开", "文件夹", "标签"); the tag section starts collapsed.
+    private(set) var collapsedSections: Set<String> = ["标签"]
     /// Path of the selected sidebar row (a note or a folder); drives where ⌘N creates notes.
     var selection: String?
     var columnVisibility: NavigationSplitViewVisibility = .all
@@ -24,14 +27,21 @@ final class AppModel {
     @ObservationIgnored private var ops: VaultFileOps?
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    /// One session per tab, created lazily; at most `maxLiveSessions` are kept, least recently used first out.
+    @ObservationIgnored private var sessions: [String: NoteSession] = [:]
+    @ObservationIgnored private var sessionUse: [String] = []
+    /// The deleted note shown with its "已被删除" banner; its tab goes away when the user leaves it.
+    @ObservationIgnored private var deletedCurrent: String?
+    @ObservationIgnored private let persistDebouncer = Debouncer(delay: .milliseconds(500))
 
     private static let recentKey = "recentVaults"
+    private static let maxLiveSessions = 10
 
     init() {
         recentVaults = (defaults.stringArray(forKey: Self.recentKey) ?? []).map { URL(fileURLWithPath: $0, isDirectory: true) }
         for name in [NSApplication.didResignActiveNotification, NSApplication.willTerminateNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.currentSession?.saveNow() }
+                MainActor.assumeIsolated { self?.flushAll() }
             })
         }
         reopenLastVault()
@@ -46,13 +56,17 @@ final class AppModel {
     }
 
     func openVault(_ url: URL) {
-        currentSession?.saveNow()
+        flushAll()
+        sessions.removeAll()
+        sessionUse.removeAll()
+        deletedCurrent = nil
         currentSession = nil
         selection = nil
         watcher?.stop()
         vaultRoot = url
         ops = VaultFileOps(root: url)
         rememberRecent(url)
+        restoreWorkspace(for: url)
         refreshTree()
         let watcher = VaultWatcher(root: url, registry: registry) { [weak self] changes in
             Task { @MainActor in self?.apply(changes) }
@@ -101,41 +115,209 @@ final class AppModel {
 
     private func apply(_ changes: [VaultChange]) {
         refreshTree()
-        for change in changes { currentSession?.handle(change) }
+        for change in changes {
+            for session in sessions.values { session.handle(change) }
+            switch change {
+            case .removed(let path) where isCurrent(path):
+                // Keep the tab so its "此笔记已被删除" banner can be answered.
+                deletedCurrent = path
+                var others = workspace
+                others.apply(change)
+                workspace.pinned = others.pinned
+                workspace.open = workspace.open.filter { others.open.contains($0) || $0 == workspace.current }
+            case .renamed(let from, let to):
+                rekeySessions(from: from, to: to)
+                workspace.apply(change)
+            default:
+                workspace.apply(change)
+            }
+        }
+        sessionsDidChange()
     }
 
-    // MARK: Notes
+    private func isCurrent(_ path: String) -> Bool {
+        guard let current = workspace.current else { return false }
+        return current == path || current.hasPrefix(path + "/")
+    }
 
+    // MARK: Tabs
+
+    /// Focuses the note's tab, adding one after the current tab when needed.
     func open(path: String) {
-        guard let root = vaultRoot, currentSession?.path != path else { return }
-        currentSession?.saveNow()
+        guard vaultRoot != nil, workspace.current != path else { return }
+        leaveCurrent()
+        workspace.open(path)
+        sessionsDidChange()
+    }
+
+    func selectNext() { change { $0.selectNext() } }
+    func selectPrevious() { change { $0.selectPrevious() } }
+    func select(index: Int) { change { $0.select(index: index) } }
+
+    func close(path: String) {
+        if workspace.current == path { leaveCurrent() }
+        workspace.close(path)
+        if !workspace.ordered.contains(path) { dropSession(path) }
+        sessionsDidChange()
+    }
+
+    func closeCurrent() {
+        if let current = workspace.current { close(path: current) }
+    }
+
+    func pin(path: String) {
+        workspace.pin(path)
+        sessionsDidChange()
+    }
+
+    func unpin(path: String) {
+        workspace.unpin(path)
+        sessionsDidChange()
+    }
+
+    func moveOpen(from offsets: IndexSet, to destination: Int) {
+        workspace.moveOpen(from: offsets, to: destination)
+        sessionsDidChange()
+    }
+
+    private func change(_ mutate: (inout WorkspaceState) -> Void) {
+        let before = workspace.current
+        mutate(&workspace)
+        if workspace.current != before {
+            if let before, let session = sessions[before] { session.saveNow() }
+            if let before, deletedCurrent == before { forgetDeleted(before) }
+        }
+        sessionsDidChange()
+    }
+
+    /// Saves the tab being left; a deleted note that is left behind loses its tab.
+    private func leaveCurrent() {
+        guard let current = workspace.current else { return }
+        sessions[current]?.saveNow()
+        if deletedCurrent == current { forgetDeleted(current) }
+    }
+
+    private func forgetDeleted(_ path: String) {
+        deletedCurrent = nil
+        workspace.apply(.removed(path))
+        dropSession(path)
+    }
+
+    // MARK: Sessions
+
+    /// Creates the current tab's session when needed and publishes the derived state.
+    private func sessionsDidChange() {
+        if let current = workspace.current {
+            currentSession = session(for: current)
+            if selection == nil || selection.map(isNotePath) == true { selection = current }
+        } else {
+            currentSession = nil
+        }
+        trimSessions()
+        scheduleSave()
+    }
+
+    private func session(for path: String) -> NoteSession? {
+        guard let root = vaultRoot else { return nil }
+        sessionUse.removeAll { $0 == path }
+        sessionUse.append(path)
+        if let existing = sessions[path] { return existing }
         let session = NoteSession(root: root, path: path, registry: registry)
         session.onClose = { [weak self, weak session] in
-            guard let self, self.currentSession === session else { return }
-            self.currentSession = nil
+            guard let self, let session else { return }
+            self.removeTab(session.path)
         }
         session.load()
-        currentSession = session
-        selection = path
+        sessions[path] = session
+        return session
     }
+
+    /// A tab whose file is gone for good: drop it from pinned and open alike.
+    private func removeTab(_ path: String) {
+        if deletedCurrent == path { deletedCurrent = nil }
+        workspace.apply(.removed(path))
+        dropSession(path)
+        sessionsDidChange()
+    }
+
+    private func dropSession(_ path: String) {
+        sessions[path]?.saveNow()
+        sessions[path] = nil
+        sessionUse.removeAll { $0 == path }
+    }
+
+    private func rekeySessions(from: String, to: String) {
+        for key in Array(sessions.keys) where key == from || key.hasPrefix(from + "/") {
+            let newKey = to + key.dropFirst(from.count)
+            sessions[newKey] = sessions.removeValue(forKey: key)
+            sessions[newKey]?.handle(.renamed(from: key, to: newKey))
+            sessionUse = sessionUse.map { $0 == key ? newKey : $0 }
+        }
+        if deletedCurrent == from { deletedCurrent = to }
+    }
+
+    private func trimSessions() {
+        while sessions.count > Self.maxLiveSessions {
+            guard let victim = sessionUse.first(where: { $0 != workspace.current && sessions[$0]?.isDirty != true }) else { break }
+            dropSession(victim)
+        }
+    }
+
+    private func flushAll() {
+        for session in sessions.values { session.saveNow() }
+        persistDebouncer.flush()
+    }
+
+    private func isNotePath(_ path: String) -> Bool {
+        path.hasSuffix(".md") || path.hasSuffix(".markdown")
+    }
+
+    // MARK: Persistence (pinned in the vault, tabs per device)
+
+    private func restoreWorkspace(for root: URL) {
+        let pinned = WorkspaceFiles.loadPinned(vault: root).pinned
+        let session = WorkspaceFiles.loadSession(vault: root)
+        let exists: (String) -> Bool = { FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) }
+        let pinnedAlive = pinned.filter(exists)
+        let openAlive = session.open.filter { exists($0) && !pinnedAlive.contains($0) }
+        let current = session.current.flatMap { ($0.isEmpty || !exists($0)) ? nil : $0 }
+        workspace = WorkspaceState(pinned: pinnedAlive, open: openAlive, current: current ?? openAlive.first ?? pinnedAlive.first)
+        collapsedSections = session.collapsedSections.isEmpty && session.open.isEmpty && session.current == nil
+            ? ["标签"] : session.collapsedSections
+        sessionsDidChange()
+    }
+
+    private func scheduleSave() {
+        guard let root = vaultRoot else { return }
+        let state = workspace
+        let collapsed = collapsedSections
+        persistDebouncer.schedule {
+            try? WorkspaceFiles.save(PinnedFile(pinned: state.pinned), vault: root)
+            try? WorkspaceFiles.save(SessionFile(open: state.open, current: state.current, collapsedSections: collapsed), vault: root)
+        }
+    }
+
+    func toggleSection(_ name: String) {
+        if collapsedSections.contains(name) { collapsedSections.remove(name) } else { collapsedSections.insert(name) }
+        scheduleSave()
+    }
+
+    // MARK: Notes and folders
 
     /// Folder that new notes and folders go into: the selected folder, or the selected note's folder.
     var targetFolder: String {
         guard let selection else { return "" }
-        if selection.hasSuffix(".md") || selection.hasSuffix(".markdown") {
-            return (selection as NSString).deletingLastPathComponent
-        }
+        if isNotePath(selection) { return (selection as NSString).deletingLastPathComponent }
         return selection
     }
 
     func newNote(inFolder folder: String? = nil) {
         perform {
-            let note = try ops?.createNote(inFolder: folder ?? targetFolder)
+            let target = folder ?? targetFolder
+            guard let note = try ops?.createNote(inFolder: target) else { return }
             refreshTree()
-            if let note {
-                if !(folder ?? targetFolder).isEmpty { expandedFolders.insert(folder ?? targetFolder) }
-                open(path: note.path)
-            }
+            if !target.isEmpty { expandedFolders.insert(target) }
+            open(path: note.path)
         }
     }
 
@@ -150,14 +332,16 @@ final class AppModel {
     }
 
     func rename(path: String) {
-        let current = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
-        let isNote = path.hasSuffix(".md") || path.hasSuffix(".markdown")
-        let initial = isNote ? current : (path as NSString).lastPathComponent
+        let isNote = isNotePath(path)
+        let leaf = (path as NSString).lastPathComponent
+        let initial = isNote ? (leaf as NSString).deletingPathExtension : leaf
         guard let name = promptForText(title: "重命名", message: "新名称", defaultValue: initial), name != initial else { return }
         perform {
             guard let newPath = try ops?.rename(path: path, to: name) else { return }
-            if currentSession?.path == path { currentSession?.handle(.renamed(from: path, to: newPath)) }
+            rekeySessions(from: path, to: newPath)
+            workspace.apply(.renamed(from: path, to: newPath))
             if selection == path { selection = newPath }
+            sessionsDidChange()
             refreshTree()
         }
     }
@@ -167,15 +351,21 @@ final class AppModel {
         Task {
             do {
                 try await ops.trash(path: path)
-                if let session = currentSession, session.path == path || session.path.hasPrefix(path + "/") {
-                    currentSession = nil
-                }
+                workspace.apply(.removed(path))
+                for key in Array(sessions.keys) where key == path || key.hasPrefix(path + "/") { sessions[key] = nil }
+                sessionUse.removeAll { $0 == path || $0.hasPrefix(path + "/") }
                 if selection == path { selection = nil }
+                sessionsDidChange()
                 refreshTree()
             } catch {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    func revealInFinder(path: String) {
+        guard let root = vaultRoot else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(path)])
     }
 
     func saveNow() { currentSession?.saveNow() }

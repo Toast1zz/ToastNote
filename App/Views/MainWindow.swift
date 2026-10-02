@@ -11,7 +11,7 @@ struct MainWindow: View {
                 WelcomeView(model: model)
             } else {
                 NavigationSplitView(columnVisibility: $model.columnVisibility) {
-                    FolderTreeView(model: model)
+                    SidebarView(model: model)
                         .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 320)
                 } detail: {
                     detail

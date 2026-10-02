@@ -25,6 +25,22 @@ struct AppCommands: Commands {
                 .keyboardShortcut("s")
                 .disabled(model.currentSession == nil)
         }
+        CommandMenu("标签页") {
+            Button("关闭标签页") { model.closeCurrent() }
+                .keyboardShortcut("w")
+                .disabled(model.workspace.current == nil)
+            Divider()
+            Button("下一个标签页") { model.selectNext() }
+                .keyboardShortcut(.tab, modifiers: .control)
+            Button("上一个标签页") { model.selectPrevious() }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+            Divider()
+            ForEach(1...9, id: \.self) { number in
+                Button("切换到第 \(number) 个标签页") { model.select(index: number - 1) }
+                    .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .command)
+                    .disabled(model.workspace.ordered.count < number)
+            }
+        }
         CommandMenu("格式") {
             formatButton("粗体", key: "b", modifiers: .command, action: #selector(MarkdownTextView.toggleBold(_:)))
             formatButton("斜体", key: "i", modifiers: .command, action: #selector(MarkdownTextView.toggleItalic(_:)))
