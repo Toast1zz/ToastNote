@@ -43,36 +43,21 @@ struct TagsSection: View {
             Text("暂无标签")
                 .font(.callout)
                 .foregroundStyle(.tertiary)
-                .frame(height: 28)
+                .frame(height: SidebarMetrics.rowHeight)
                 .selectionDisabled()
         } else {
             ForEach(rows) { row in
-                HStack(spacing: 4) {
-                    if row.hasChildren {
-                        Button { toggle(row.tag) } label: {
-                            Image(systemName: model.expandedTags.contains(row.tag) ? "chevron.down" : "chevron.right")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 12)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(model.expandedTags.contains(row.tag) ? "折叠" : "展开")
-                    } else {
-                        Color.clear.frame(width: 12)
+                Button { model.selectTag(row.tag) } label: {
+                    SidebarTreeRow(
+                        depth: row.depth,
+                        leading: .tag(hasChildren: row.hasChildren, isExpanded: model.expandedTags.contains(row.tag)) { toggle(row.tag) },
+                        title: row.leaf
+                    ) {
+                        Text("\(row.count)").foregroundStyle(.secondary).font(.callout)
                     }
-                    Button { model.selectTag(row.tag) } label: {
-                        HStack(spacing: 4) {
-                            Label(row.leaf, systemImage: "number").imageScale(.small).lineLimit(1)
-                            Spacer(minLength: 0)
-                            Text("\(row.count)").foregroundStyle(.secondary).font(.callout)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("#" + row.tag)
                 }
-                .frame(height: 28)
-                .padding(.leading, CGFloat(row.depth) * 14)
+                .buttonStyle(.plain)
+                .help("#" + row.tag)
                 .selectionDisabled()
             }
         }

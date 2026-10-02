@@ -29,7 +29,7 @@ struct NoteRow: View {
                 .accessibilityLabel("关闭 \(title)")
             }
         }
-        .frame(height: 28)
+        .frame(height: SidebarMetrics.rowHeight)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .help(path)

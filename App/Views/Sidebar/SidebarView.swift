@@ -49,7 +49,7 @@ struct SidebarView: View {
                     Text("拖入笔记以置顶")
                         .font(.callout)
                         .foregroundStyle(.tertiary)
-                        .frame(height: 28)
+                        .frame(height: SidebarMetrics.rowHeight)
                         .selectionDisabled()
                         .dropDestination(for: String.self) { paths, _ in pinAll(paths) }
                 }
@@ -106,24 +106,11 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func folderRowView(_ row: FolderRow) -> some View {
-        HStack(spacing: 4) {
-            if row.isFolder {
-                Button { toggle(row.path) } label: {
-                    Image(systemName: model.expandedFolders.contains(row.path) ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 12)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(model.expandedFolders.contains(row.path) ? "折叠" : "展开")
-                Label(row.name, systemImage: "folder")
-            } else {
-                Text(row.name).lineLimit(1).truncationMode(.tail)
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(height: 28)
-        .padding(.leading, CGFloat(row.depth) * 14 + (row.isFolder ? 0 : 16))
+        SidebarTreeRow(
+            depth: row.depth,
+            leading: row.isFolder ? .folder(isExpanded: model.expandedFolders.contains(row.path)) { toggle(row.path) } : .none,
+            title: row.name
+        ) { EmptyView() }
         .draggable(row.path)
         .help(row.path)
     }

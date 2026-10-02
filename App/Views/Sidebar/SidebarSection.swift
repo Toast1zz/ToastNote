@@ -17,6 +17,8 @@ struct SidebarSection<Content: View>: View {
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
+                // List rows are inset 2 pt further than section headers; this puts both on one edge.
+                .padding(.leading, 2)
         }
     }
 }
