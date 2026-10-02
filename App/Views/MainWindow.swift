@@ -10,8 +10,13 @@ struct MainWindow: View {
                 WelcomeView(model: model)
             } else {
                 NavigationSplitView(columnVisibility: $model.columnVisibility) {
-                    FolderTreeView(model: model)
-                        .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 320)
+                    // The footer sits below the list (not over it) so scrolled rows never show through.
+                    VStack(spacing: 0) {
+                        FolderTreeView(model: model)
+                        Divider()
+                        sidebarFooter
+                    }
+                    .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 320)
                 } detail: {
                     detail
                 }
@@ -26,6 +31,31 @@ struct MainWindow: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
+    }
+
+    private var sidebarFooter: some View {
+        HStack(spacing: 8) {
+            Button { model.newNote() } label: {
+                Label("新建笔记", systemImage: "plus")
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            Menu {
+                Button("新建文件夹") { model.newFolder() }
+                Divider()
+                Button("打开笔记库…") { model.chooseVault() }
+                Button("新建笔记库…") { model.createVault() }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("更多")
+            .accessibilityLabel("更多")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder
