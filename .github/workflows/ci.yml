@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Test
+        run: swift test --package-path Packages/ToastNoteKit
+      - name: Build
+        run: |
+          xcodegen generate
+          xcodebuild -project ToastNote.xcodeproj -scheme ToastNote -configuration Debug -destination 'platform=macOS' build 2>&1 | tail -5

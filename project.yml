@@ -1,0 +1,42 @@
+name: ToastNote
+options:
+  bundleIdPrefix: app.toastnote
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    ENABLE_HARDENED_RUNTIME: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+packages:
+  ToastNoteKit:
+    path: Packages/ToastNoteKit
+targets:
+  ToastNote:
+    type: application
+    platform: macOS
+    sources: [App]
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleName: ToastNote
+        CFBundleDisplayName: ToastNote
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "14.0"
+        NSHumanReadableCopyright: "MIT License"
+    entitlements:
+      path: App/ToastNote.entitlements   # empty dict: no sandbox
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.toastnote.mac
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - { package: ToastNoteKit, product: VaultKit }
+      - { package: ToastNoteKit, product: EditorKit }
+      - { package: ToastNoteKit, product: AIFormatKit }
+      - { package: ToastNoteKit, product: IndexKit }
+      - { package: ToastNoteKit, product: ExportKit }
