@@ -62,7 +62,7 @@ struct TagsSection: View {
                     }
                     Button { model.selectTag(row.tag) } label: {
                         HStack(spacing: 4) {
-                            Label(row.leaf, systemImage: "number").lineLimit(1)
+                            Label(row.leaf, systemImage: "number").imageScale(.small).lineLimit(1)
                             Spacer(minLength: 0)
                             Text("\(row.count)").foregroundStyle(.secondary).font(.callout)
                         }

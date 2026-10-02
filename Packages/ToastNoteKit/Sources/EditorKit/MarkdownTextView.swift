@@ -241,7 +241,10 @@ public final class MarkdownTextView: NSTextView {
         tableColumnWidths = tableColumnWidths.filter { location, _ in
             result.decorations.contains { if case .table(let layout) = $0 { layout.range.location == location } else { false } }
         }
-        if range.length > 0 { slantItalicCJK(in: range, storage: storage) }
+        if range.length > 0 {
+            slantItalicCJK(in: range, storage: storage)
+            spaceOutTagPills(result.decorations, in: range, storage: storage)
+        }
         alignTableColumns(result.decorations, in: range, hidden: hidden, storage: storage)
         concealingLayoutManager.tableColumnWidths = tableColumnWidths
         concealingLayoutManager.hidden = hidden
@@ -502,6 +505,17 @@ public final class MarkdownTextView: NSTextView {
         switch unit {
         case 0x2E80...0x9FFF, 0xAC00...0xD7AF, 0xF900...0xFAFF, 0xFE30...0xFE4F, 0xFF00...0xFFEF: true
         default: false
+        }
+    }
+
+    /// A pill reaches a few points past its text on both sides, more than a space is wide; widening the space after
+    /// a tag keeps two neighbouring pills apart.
+    private func spaceOutTagPills(_ decorations: [Decoration], in range: NSRange, storage: NSTextStorage) {
+        let text = string as NSString
+        for case .tagPill(let tag) in decorations where NSLocationInRange(NSMaxRange(tag), range) {
+            let after = NSMaxRange(tag)
+            guard after < text.length, text.character(at: after) == 0x20 else { continue }
+            storage.addAttribute(.kern, value: 6, range: NSRange(location: after, length: 1))
         }
     }
 

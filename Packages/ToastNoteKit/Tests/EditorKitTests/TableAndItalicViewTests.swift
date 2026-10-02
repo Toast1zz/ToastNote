@@ -44,6 +44,12 @@ private func x(_ view: MarkdownTextView, _ index: Int) -> CGFloat {
         #expect(view.tableColumnWidths[0]?.count == 2)
     }
 
+    @Test func spaceAfterATagIsWidenedSoNeighbouringPillsDoNotTouch() {
+        let view = makeView("#读书 #设计\n\n尾")
+        let kern = view.textStorage!.attribute(.kern, at: 3, effectiveRange: nil) as? CGFloat
+        #expect((kern ?? 0) >= 6)
+    }
+
     @Test func cjkItalicIsSlantedButLatinUsesTheItalicFace() {
         let view = makeView("*中a*\n\n尾")
         let storage = view.textStorage!
