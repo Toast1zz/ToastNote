@@ -92,6 +92,43 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     /// which `withAlphaComponent` would turn into an opaque-looking gray).
     static var codeWash: NSColor { NSColor.labelColor.withAlphaComponent(0.07) }
 
+
+    // MARK: Text-relative geometry
+    //
+    // Line fragments are taller than the text (fixed line heights put the extra space above the glyphs), so
+    // backgrounds are measured from the baseline instead of from the line box.
+
+    /// Baseline of the line containing the character at `index`, in container coordinates.
+    private func baseline(ofCharacterAt index: Int) -> CGFloat {
+        let glyph = min(glyphIndexForCharacter(at: index), max(numberOfGlyphs - 1, 0))
+        return lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + location(forGlyphAt: glyph).y
+    }
+
+    /// `rect` narrowed vertically to the height of the text on its line.
+    private func textHugging(_ rect: NSRect, fontSize: CGFloat, verticalPadding: CGFloat) -> NSRect {
+        guard let container = textContainers.first, numberOfGlyphs > 0 else { return rect }
+        let glyph = glyphIndex(for: NSPoint(x: rect.midX, y: rect.midY), in: container)
+        let baseline = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + location(forGlyphAt: glyph).y
+        let top = baseline - 1.0 * fontSize - verticalPadding
+        let bottom = baseline + 0.3 * fontSize + verticalPadding
+        return NSRect(x: rect.minX, y: top, width: rect.width, height: bottom - top)
+    }
+
+    /// Full-width box for a code block with equal padding above the first and below the last line of text.
+    private func codeBackgroundRect(for range: NSRange, width: CGFloat) -> NSRect? {
+        guard numberOfGlyphs > 0, range.length > 0 else { return nil }
+        let codeSize = 13 * theme.bodySize / 15
+        let padding: CGFloat = 8
+        // Fence lines are hidden while the block is inactive; measure from the first and last visible line.
+        var first = range.location
+        while first < NSMaxRange(range) - 1, hidden.contains(first) { first += 1 }
+        var last = NSMaxRange(range) - 1
+        while last > first, hidden.contains(last) { last -= 1 }
+        let top = baseline(ofCharacterAt: first) - 1.0 * codeSize - padding
+        let bottom = baseline(ofCharacterAt: last) + 0.3 * codeSize + padding
+        return NSRect(x: 0, y: top, width: width, height: bottom - top)
+    }
+
     // MARK: Drawing
 
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
@@ -103,30 +140,28 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         for decoration in decorations {
             switch decoration {
             case .codeBackground(let range):
-                guard intersects(range, visible) else { continue }
-                let rects = lineRects(for: range)
-                guard let first = rects.first, let last = rects.last else { continue }
-                let rect = NSRect(x: 0, y: first.minY - 6, width: container.size.width, height: last.maxY - first.minY + 12)
+                guard intersects(range, visible), let rect = codeBackgroundRect(for: range, width: container.size.width) else { continue }
                 fill(rect, origin: origin, radius: 6, color: Self.codeWash)
             case .codeLanguage(let language, let range):
-                guard intersects(range, visible), let first = lineRects(for: range).first else { continue }
+                guard intersects(range, visible), let box = codeBackgroundRect(for: range, width: container.size.width) else { continue }
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.tertiaryLabelColor,
                 ]
                 let size = (language as NSString).size(withAttributes: attributes)
                 (language as NSString).draw(
-                    at: NSPoint(x: origin.x + container.size.width - size.width - theme.codePadding, y: origin.y + first.minY - 2),
+                    at: NSPoint(x: origin.x + box.maxX - size.width - 10, y: origin.y + box.minY + 5),
                     withAttributes: attributes
                 )
             case .inlineCodeBackground(let range):
                 guard intersects(range, visible) else { continue }
                 for rect in enclosingRects(for: range) {
-                    fill(rect.insetBy(dx: -2, dy: 1), origin: origin, radius: 4, color: Self.codeWash)
+                    let box = textHugging(rect, fontSize: theme.bodySize, verticalPadding: 1).insetBy(dx: -2, dy: 0)
+                    fill(box, origin: origin, radius: 4, color: Self.codeWash)
                 }
             case .tagPill(let range):
                 guard intersects(range, visible) else { continue }
                 for rect in enclosingRects(for: range) {
-                    let pill = rect.insetBy(dx: -3, dy: 1)
+                    let pill = textHugging(rect, fontSize: theme.bodySize, verticalPadding: 1).insetBy(dx: -4, dy: 0)
                     fill(pill, origin: origin, radius: pill.height / 2, color: accent.withAlphaComponent(0.12))
                 }
             case .quoteBar(let range):

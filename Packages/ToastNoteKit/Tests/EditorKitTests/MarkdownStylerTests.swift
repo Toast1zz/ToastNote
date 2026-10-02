@@ -92,6 +92,17 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
         #expect(result.runs.contains { $0.style.role == .heading(1) && $0.style.bold && $0.range == r(6, 1) })
     }
 
+    @Test func lineHeightIsAMultipleOfTheFontSizeNotOfTheNaturalLineHeight() {
+        // Spec §9.3: body 1.75, headings 1.35, code 1.5 times the font size.
+        let theme = EditorTheme.default
+        let body = theme.paragraphStyle(for: TextStyle(role: .body))
+        #expect(body.minimumLineHeight == 1.75 * 15 && body.maximumLineHeight == 1.75 * 15)
+        let heading = theme.paragraphStyle(for: TextStyle(role: .heading(1)))
+        #expect(heading.minimumLineHeight == 1.35 * 28)
+        let code = theme.paragraphStyle(for: TextStyle(role: .codeBlock))
+        #expect(code.maximumLineHeight == 1.5 * 13)
+    }
+
     @Test func blockStyleCoversMarkersSoParagraphAttributesApply() {
         // A paragraph's spacing comes from its first character, which for headings is a (hidden) marker.
         let result = style("## 标题")
@@ -101,12 +112,30 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
     @Test func blankLinesBetweenBlocksAreCompact() {
         // Blank lines are real empty paragraphs; left alone they would double every paragraph gap.
         let result = style("a\n\n\nb")
-        let blanks = result.runs.filter { $0.style.blankLine }.map(\.range)
+        let blanks = result.runs.filter { $0.style.blankLine != nil }.map(\.range)
         #expect(blanks == [r(2, 1), r(3, 1)])
     }
 
+    @Test func blankLineRemembersWhatFollowsIt() {
+        // A hidden "## " rides on the previous line fragment, so the blank line in front carries the heading gap.
+        let heading = style("a\n\n## b").runs.first { $0.style.blankLine != nil }
+        #expect(heading?.style.blankLine == .beforeHeading(2))
+        let code = style("a\n\n```\nx\n```").runs.first { $0.style.blankLine != nil }
+        #expect(code?.style.blankLine == .beforeCode)
+        let plain = style("a\n\nb").runs.first { $0.style.blankLine != nil }
+        #expect(plain?.style.blankLine == .plain)
+    }
+
+    @Test func blankLineHeightGrowsBeforeHeadings() {
+        let theme = EditorTheme.default
+        let plain = theme.paragraphStyle(for: TextStyle(role: .body, blankLine: .plain))
+        let heading = theme.paragraphStyle(for: TextStyle(role: .body, blankLine: .beforeHeading(2)))
+        #expect(plain.maximumLineHeight == 0.5 * 15)
+        #expect(heading.maximumLineHeight == 1.1 * 22)
+    }
+
     @Test func noBlankRunsBetweenListItemsOrAfterNestedMarkers() {
-        #expect(style("- a\n- b\n  - c").runs.allSatisfy { !$0.style.blankLine })
+        #expect(style("- a\n- b\n  - c").runs.allSatisfy { $0.style.blankLine == nil })
     }
 
     @Test func listItemsUseTightSpacing() {

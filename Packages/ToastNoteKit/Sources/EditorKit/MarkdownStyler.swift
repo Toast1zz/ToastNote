@@ -52,22 +52,28 @@ public enum MarkdownStyler {
     /// Blank lines are real empty paragraphs; give them a short line so they do not double paragraph gaps.
     private static func emitBlankLines(blocks: [Block], text: NSString, into result: inout StyleResult) {
         var cursor = 0
-        func scan(upTo end: Int) {
+        func scan(upTo end: Int, before next: Block?) {
+            var kind = BlankLine.plain
+            switch next?.kind {
+            case .heading(let level)?: kind = .beforeHeading(level)
+            case .codeBlock?: kind = .beforeCode
+            default: break
+            }
             var index = cursor
             while index < min(end, text.length) {
                 // A blank line is a newline that starts its line.
                 if text.character(at: index) == 0x0A, index == 0 || text.character(at: index - 1) == 0x0A {
-                    result.runs.append(StyleRun(range: NSRange(location: index, length: 1), style: TextStyle(role: .body, blankLine: true)))
+                    result.runs.append(StyleRun(range: NSRange(location: index, length: 1), style: TextStyle(role: .body, blankLine: kind)))
                 }
                 index += 1
             }
         }
         for block in blocks.sorted(by: { $0.range.location < $1.range.location }) {
-            scan(upTo: block.range.location)
+            scan(upTo: block.range.location, before: block)
             // Skip the block's own line terminator.
             cursor = max(cursor, NSMaxRange(block.range) + 1)
         }
-        scan(upTo: text.length)
+        scan(upTo: text.length, before: nil)
     }
 
     // MARK: Per block

@@ -1,6 +1,12 @@
 import AppKit
 import Foundation
 
+/// What a blank line sits in front of. Headings lose their `paragraphSpacingBefore` when their hidden `#`
+/// marker lands on the previous line fragment, so the blank line in front of them carries that space.
+public enum BlankLine: Hashable, Sendable {
+    case plain, beforeHeading(Int), beforeCode
+}
+
 public struct TextStyle: Hashable, Sendable {
     public enum Role: Hashable, Sendable {
         case body, heading(Int), codeInline, codeBlock, quote, link, tag, marker, taskDone, frontmatterSummary
@@ -15,11 +21,11 @@ public struct TextStyle: Hashable, Sendable {
     /// List items sit closer together than paragraphs.
     public var tightSpacing = false
     /// A blank line between blocks; kept short so it does not double the paragraph gap.
-    public var blankLine = false
+    public var blankLine: BlankLine?
 
     public init(
         role: Role, bold: Bool = false, italic: Bool = false, strikethrough: Bool = false,
-        listDepth: Int? = nil, tightSpacing: Bool = false, blankLine: Bool = false
+        listDepth: Int? = nil, tightSpacing: Bool = false, blankLine: BlankLine? = nil
     ) {
         self.role = role
         self.bold = bold
@@ -101,37 +107,37 @@ public struct EditorTheme: Sendable {
     /// Line height and spacing live in NSParagraphStyle, never in extra blank lines (spec §9.3).
     func paragraphStyle(for style: TextStyle) -> NSParagraphStyle {
         let paragraph = NSMutableParagraphStyle()
-        if style.blankLine {
-            paragraph.minimumLineHeight = 0.5 * bodySize
-            paragraph.maximumLineHeight = 0.5 * bodySize
+        if let blank = style.blankLine {
+            let height: CGFloat = switch blank {
+            case .plain: 0.5 * bodySize
+            case .beforeHeading(let level): headingSpacing(level).before * headingSize(level)
+            case .beforeCode: 0.9 * bodySize
+            }
+            paragraph.minimumLineHeight = height
+            paragraph.maximumLineHeight = height
             return paragraph
         }
         switch style.role {
         case .heading(let level):
-            let (before, after): (CGFloat, CGFloat) = switch level {
-            case 1: (1.2, 0.4)
-            case 2: (1.1, 0.35)
-            case 3: (1.0, 0.3)
-            default: (0.9, 0.25)
-            }
+            let (before, after) = headingSpacing(level)
             let size = headingSize(level)
-            paragraph.lineHeightMultiple = 1.35
+            setLineHeight(paragraph, 1.35 * size)
             paragraph.paragraphSpacingBefore = before * size
             paragraph.paragraphSpacing = after * size
         case .codeBlock:
-            paragraph.lineHeightMultiple = 1.5
+            setLineHeight(paragraph, 1.5 * codeSize)
             paragraph.firstLineHeadIndent = codePadding
             paragraph.headIndent = codePadding
             paragraph.tailIndent = -codePadding
         case .codeInline:
-            paragraph.lineHeightMultiple = 1.5
+            setLineHeight(paragraph, 1.5 * codeSize)
         case .quote:
-            paragraph.lineHeightMultiple = 1.75
+            setLineHeight(paragraph, 1.75 * bodySize)
             paragraph.paragraphSpacing = 0.6 * bodySize
             paragraph.firstLineHeadIndent = quoteIndent
             paragraph.headIndent = quoteIndent
         default:
-            paragraph.lineHeightMultiple = 1.75
+            setLineHeight(paragraph, 1.75 * bodySize)
             paragraph.paragraphSpacing = (style.tightSpacing ? 0.2 : 0.6) * bodySize
             if let depth = style.listDepth {
                 paragraph.firstLineHeadIndent = listGutter * CGFloat(depth + 1)
@@ -139,6 +145,24 @@ public struct EditorTheme: Sendable {
             }
         }
         return paragraph
+    }
+
+    /// Space before and after a heading, in ems of its own size (spec §9.3).
+    func headingSpacing(_ level: Int) -> (before: CGFloat, after: CGFloat) {
+        switch level {
+        case 1: (1.2, 0.4)
+        case 2: (1.1, 0.35)
+        case 3: (1.0, 0.3)
+        default: (0.9, 0.25)
+        }
+    }
+
+    /// Spec §9.3 gives line height as a multiple of the font size (CSS style). `lineHeightMultiple` would scale the
+    /// font's natural height instead, which for CJK fallback fonts is already about 1.4x the size, so a fixed
+    /// height is used.
+    private func setLineHeight(_ paragraph: NSMutableParagraphStyle, _ height: CGFloat) {
+        paragraph.minimumLineHeight = height
+        paragraph.maximumLineHeight = height
     }
 
     private func font(size: CGFloat, weight: NSFont.Weight, style: TextStyle) -> NSFont {
