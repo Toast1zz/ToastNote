@@ -40,14 +40,22 @@ public struct TextStyle: Hashable, Sendable {
 public struct EditorTheme: Sendable {
     /// 13...20, spec §9.3.
     public var bodySize: CGFloat = 15
-    /// 600...900.
-    public var maxContentWidth: CGFloat = 720
+    /// The widest the text column grows, 600...1200. It follows the window up to this cap (see `horizontalInset`).
+    public var maxContentWidth: CGFloat = 960
 
     public static let `default` = EditorTheme()
 
-    public init(bodySize: CGFloat = 15, maxContentWidth: CGFloat = 720) {
+    public init(bodySize: CGFloat = 15, maxContentWidth: CGFloat = 960) {
         self.bodySize = min(max(bodySize, 13), 20)
-        self.maxContentWidth = min(max(maxContentWidth, 600), 900)
+        self.maxContentWidth = min(max(maxContentWidth, 600), 1200)
+    }
+
+    /// Space on each side of the text column for a view `width` points wide. The sides are 12% of the width, so
+    /// the column grows with the window; wide windows stop at `maxContentWidth` and center the column, and
+    /// narrow ones keep at least 48 pt (spec §9.3, made adaptive).
+    public func horizontalInset(forWidth width: CGFloat) -> CGFloat {
+        let proportional = max(48, (0.12 * width).rounded(.down))
+        return max(proportional, ((width - maxContentWidth) / 2).rounded(.down))
     }
 
     private var scale: CGFloat { bodySize / 15 }

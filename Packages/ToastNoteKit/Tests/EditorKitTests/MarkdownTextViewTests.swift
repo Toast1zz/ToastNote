@@ -134,12 +134,33 @@ private func isHidden(_ view: MarkdownTextView, character: Int) -> Bool {
         #expect(view.restyleCount == before + 1)
     }
 
-    @Test func contentIsCenteredWithMinimumSideInset() {
+    @Test func textColumnGrowsWithTheWindowUpToTheCap() {
+        let theme = EditorTheme.default
+        // Sides are 12% of the width, so the column is 76% of it.
+        #expect(theme.horizontalInset(forWidth: 600) == 72)
+        #expect(theme.horizontalInset(forWidth: 1000) == 120)
+        // Wide windows stop at maxContentWidth and center the column.
+        #expect(theme.horizontalInset(forWidth: 1700) == (1700 - theme.maxContentWidth) / 2)
+        // Tiny windows still keep 48 pt on each side.
+        #expect(theme.horizontalInset(forWidth: 300) == 48)
+    }
+
+    @Test func columnNeverExceedsTheCap() {
+        let theme = EditorTheme.default
+        for width in stride(from: 400.0, through: 3000.0, by: 100.0) {
+            let column = width - 2 * theme.horizontalInset(forWidth: width)
+            #expect(column <= theme.maxContentWidth + 0.5)
+        }
+    }
+
+    @Test func viewUsesTheAdaptiveInset() {
         let view = makeView("x")
         view.setFrameSize(NSSize(width: 1000, height: 400))
-        #expect(view.textContainerInset == NSSize(width: 140, height: 56))  // (1000 - 720) / 2
-        view.setFrameSize(NSSize(width: 600, height: 400))
-        #expect(view.textContainerInset == NSSize(width: 48, height: 56))   // narrow window keeps 48 pt sides
+        #expect(view.textContainerInset == NSSize(width: 120, height: 56))
+        view.setFrameSize(NSSize(width: 1700, height: 400))
+        #expect(view.textContainerInset.width == (1700 - EditorTheme.default.maxContentWidth) / 2)
+        view.setFrameSize(NSSize(width: 300, height: 400))
+        #expect(view.textContainerInset == NSSize(width: 48, height: 56))
     }
 
     @Test func headingGetsHeadingFont() {

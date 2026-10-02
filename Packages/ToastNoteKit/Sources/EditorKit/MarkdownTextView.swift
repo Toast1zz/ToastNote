@@ -373,11 +373,11 @@ public final class MarkdownTextView: NSTextView {
 
     // MARK: Layout
 
-    /// Centers the text column at `maxContentWidth` (at least 48 pt on each side), 56 pt above the first line.
+    /// Sizes the text column to the window (see `EditorTheme.horizontalInset`), 56 pt above the first line.
     /// The bottom padding (40% of the visible height) lives in the scroll view's content insets, because
     /// `textContainerInset` is symmetric.
     private func updateLayoutInsets() {
-        let horizontal = max(48, ((bounds.width - theme.maxContentWidth) / 2).rounded(.down))
+        let horizontal = theme.horizontalInset(forWidth: bounds.width)
         let inset = NSSize(width: horizontal, height: 56)
         if textContainerInset != inset { textContainerInset = inset }
         if let scrollView = enclosingScrollView {
