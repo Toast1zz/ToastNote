@@ -110,15 +110,27 @@ public enum ContentGuard {
         return result
     }
 
-    private static let sentenceEnds: Set<Character> = ["。", "！", "？", ".", "!", "?", "\n"]
+    private static let cjkSentenceEnds: Set<Character> = ["。", "！", "？", "\n"]
+    private static let latinSentenceEnds: Set<Character> = [".", "!", "?"]
+
+    /// A Latin ".", "!" or "?" ends a sentence only before whitespace or at the end, so identifiers such as
+    /// `AuthService.login` and URLs stay in one piece.
+    private static func isSentenceEnd(at index: Int, in text: NSString) -> Bool {
+        guard let scalar = UnicodeScalar(text.character(at: index)) else { return false }
+        let character = Character(scalar)
+        if cjkSentenceEnds.contains(character) { return true }
+        guard latinSentenceEnds.contains(character) else { return false }
+        guard index + 1 < text.length else { return true }
+        return UnicodeScalar(text.character(at: index + 1)).map { CharacterSet.whitespacesAndNewlines.contains($0) } ?? false
+    }
 
     private static func sentence(containing utf16Offset: Int, in text: String) -> String {
         let ns = text as NSString
         guard utf16Offset < ns.length else { return "" }
         var start = utf16Offset
-        while start > 0, !sentenceEnds.contains(Character(UnicodeScalar(ns.character(at: start - 1)) ?? " ")) { start -= 1 }
+        while start > 0, !isSentenceEnd(at: start - 1, in: ns) { start -= 1 }
         var end = utf16Offset
-        while end < ns.length, !sentenceEnds.contains(Character(UnicodeScalar(ns.character(at: end)) ?? " ")) { end += 1 }
+        while end < ns.length, !isSentenceEnd(at: end, in: ns) { end += 1 }
         if end < ns.length { end += 1 }  // keep the closing punctuation
         return ns.substring(with: NSRange(location: start, length: end - start)).trimmingCharacters(in: .whitespacesAndNewlines)
     }

@@ -40,6 +40,15 @@ import Testing
         #expect(result.changedSentences.contains { $0.contains("第二句话") })
     }
 
+    @Test func sentencesDoNotBreakInsideIdentifiers() {
+        // The change is after the "." of an identifier; the reported sentence must still start before it.
+        let original = "之后调用 AuthService.login() 完成了登录。"
+        let formatted = "之后调用 AuthService.login() 做完了登录。"
+        let result = ContentGuard.check(original: original, formatted: formatted)
+        #expect(!result.passed)
+        #expect(result.changedSentences.contains { $0.contains("AuthService.login()") })
+    }
+
     @Test func rewordFails() {
         #expect(!ContentGuard.check(original: "我觉得不错", formatted: "我认为很好").passed)
     }

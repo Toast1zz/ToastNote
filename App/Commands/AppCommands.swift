@@ -4,6 +4,7 @@ import SwiftUI
 
 struct AppCommands: Commands {
     let model: AppModel
+    let formatController: FormatController
 
     /// Menu item that forwards to the focused editor through the responder chain.
     private func formatButton(_ title: String, key: KeyEquivalent, modifiers: EventModifiers, action: Selector) -> some View {
@@ -45,6 +46,12 @@ struct AppCommands: Commands {
             }
         }
         CommandMenu("格式") {
+            Button(formatController.isRunning ? "取消 AI 排版" : "AI 排版") {
+                if let textView = model.activeTextView { formatController.start(textView: textView) }
+            }
+            .keyboardShortcut("l", modifiers: [.command, .shift])
+            .disabled(model.currentSession == nil)
+            Divider()
             formatButton("粗体", key: "b", modifiers: .command, action: #selector(MarkdownTextView.toggleBold(_:)))
             formatButton("斜体", key: "i", modifiers: .command, action: #selector(MarkdownTextView.toggleItalic(_:)))
             formatButton("删除线", key: "x", modifiers: [.command, .shift], action: #selector(MarkdownTextView.toggleStrikethrough(_:)))

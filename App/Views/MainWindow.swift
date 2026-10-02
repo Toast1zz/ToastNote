@@ -4,6 +4,7 @@ import VaultKit
 
 struct MainWindow: View {
     @Bindable var model: AppModel
+    let formatController: FormatController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -21,6 +22,16 @@ struct MainWindow: View {
             }
         }
         .frame(minWidth: 640, minHeight: 420)
+        .sheet(isPresented: Binding(
+            get: { formatController.outcome != nil },
+            set: { if !$0 { formatController.discard() } }
+        )) {
+            if let outcome = formatController.outcome {
+                FormatReviewSheet(controller: formatController, outcome: outcome)
+            }
+        }
+        // Esc cancels a running request.
+        .onExitCommand { if formatController.isRunning { formatController.cancel() } }
         .overlay(alignment: .top) {
             if model.isQuickOpenPresented {
                 QuickOpenPanel(model: model)
@@ -52,6 +63,20 @@ struct MainWindow: View {
             .accessibilityLabel("新建笔记")
         }
         ToolbarItem(placement: .primaryAction) {
+            Button {
+                if let textView = model.activeTextView { formatController.start(textView: textView) }
+            } label: {
+                if formatController.isRunning {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("AI 排版", systemImage: "wand.and.stars")
+                }
+            }
+            .help(formatController.isRunning ? "取消 AI 排版 ⌘⇧L" : "AI 排版 ⌘⇧L")
+            .accessibilityLabel(formatController.isRunning ? "取消 AI 排版" : "AI 排版")
+            .disabled(model.currentSession == nil)
+        }
+        ToolbarItem(placement: .primaryAction) {
             Menu {
                 Button("新建文件夹") { model.newFolder() }
                 Divider()
@@ -70,6 +95,14 @@ struct MainWindow: View {
         if let session = model.currentSession {
             VStack(spacing: 0) {
                 SessionBannerView(session: session)
+                if let banner = formatController.banner {
+                    EditorBanner(message: banner.message, actions: banner.actions.map { action in
+                        EditorBanner.Action(title: action.title) {
+                            formatController.dismissBanner()
+                            action.perform()
+                        }
+                    })
+                }
                 LiveEditorView(session: session, theme: .default) { model.activeTextView = $0 }
             }
             .id(ObjectIdentifier(session))

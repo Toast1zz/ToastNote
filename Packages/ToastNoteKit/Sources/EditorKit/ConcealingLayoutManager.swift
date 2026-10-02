@@ -133,13 +133,12 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 
     // MARK: Drawing
 
-    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
-        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
-        guard !decorations.isEmpty, let container = textContainers.first else { return }
-        let visible = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+    /// Gutter bars and labels of the review window. NSTextView clips layout-manager drawing to the text
+    /// container, and the gutter lies outside it, so the view calls this from its own `draw(_:)`.
+    func drawBlockLabels(at origin: NSPoint) {
+        guard !blockLabels.isEmpty, numberOfGlyphs > 0 else { return }
         let accent = NSColor.controlAccentColor
-
-        for (range, label) in blockLabels where intersects(range, visible) {
+        for (range, label) in blockLabels {
             let rects = lineRects(for: range)
             guard let first = rects.first, let last = rects.last else { continue }
             let bar = NSRect(x: -12, y: first.minY, width: 2, height: last.maxY - first.minY)
@@ -153,6 +152,14 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 withAttributes: attributes
             )
         }
+    }
+
+
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+        guard !decorations.isEmpty, let container = textContainers.first else { return }
+        let visible = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        let accent = NSColor.controlAccentColor
 
         for decoration in decorations {
             switch decoration {

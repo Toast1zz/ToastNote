@@ -47,6 +47,7 @@ public final class MarkdownTextView: NSTextView {
 
     private let concealingLayoutManager: ConcealingLayoutManager
     private let concealAll: Bool
+    private let labelOverlay = BlockLabelOverlay()
 
     public init(theme: EditorTheme, concealAll: Bool = false) {
         self.theme = theme
@@ -75,6 +76,12 @@ public final class MarkdownTextView: NSTextView {
         isAutomaticTextReplacementEnabled = false
         isAutomaticSpellingCorrectionEnabled = false
         typingAttributes = theme.attributes(for: TextStyle(role: .body))
+
+        // NSTextView clips its own drawing to the text container, and the label gutter lies outside it.
+        labelOverlay.textView = self
+        labelOverlay.frame = bounds
+        labelOverlay.autoresizingMask = [.width, .height]
+        addSubview(labelOverlay)
     }
 
     @available(*, unavailable)
@@ -412,11 +419,16 @@ public final class MarkdownTextView: NSTextView {
         return result
     }
 
+    fileprivate func drawLabels(at origin: NSPoint) {
+        concealingLayoutManager.drawBlockLabels(at: origin)
+    }
+
     private func publishBlockLabels() {
         concealingLayoutManager.blockLabels = blockLabels.compactMap { index, label in
             blocks.indices.contains(index) ? (blocks[index].range, label) : nil
         }
         needsDisplay = true
+        labelOverlay.needsDisplay = true
     }
 
     // MARK: Layout
@@ -464,5 +476,18 @@ public final class MarkdownTextView: NSTextView {
     public override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting stillSelectingFlag: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelectingFlag)
         updateActiveBlocks()
+    }
+}
+
+/// A transparent layer over the editor that draws the review window's block labels in the side gutter.
+private final class BlockLabelOverlay: NSView {
+    weak var textView: MarkdownTextView?
+
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let textView else { return }
+        MainActor.assumeIsolated { textView.drawLabels(at: textView.textContainerOrigin) }
     }
 }
