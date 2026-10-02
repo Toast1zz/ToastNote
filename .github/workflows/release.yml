@@ -1,0 +1,78 @@
+name: Release
+
+# Push a tag like v1.0.0 to build, optionally sign and notarize, and publish a DMG plus the Sparkle appcast.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    env:
+      HAS_DEVELOPER_ID: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+      HAS_NOTARY: ${{ secrets.NOTARY_APPLE_ID != '' }}
+      HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Run tests
+        run: swift test --package-path Packages/ToastNoteKit
+
+      # Optional: only when a Developer ID certificate is configured. Without it the build is ad-hoc signed
+      # and users open it with right click > Open (see README).
+      - name: Import signing certificate
+        if: env.HAS_DEVELOPER_ID == 'true'
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          echo "${{ secrets.MACOS_CERTIFICATE_P12 }}" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "ci" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "ci" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "${{ secrets.MACOS_CERTIFICATE_PASSWORD }}" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "ci" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+
+      - name: Build DMG
+        env:
+          VERSION: ${{ github.ref_name }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+          CODE_SIGN_IDENTITY: ${{ secrets.MACOS_CODE_SIGN_IDENTITY }}
+        run: bash scripts/build-dmg.sh
+
+      - name: Notarize and staple
+        if: env.HAS_DEVELOPER_ID == 'true' && env.HAS_NOTARY == 'true'
+        run: |
+          DMG="$(ls build/ToastNote-*.dmg | head -1)"
+          xcrun notarytool submit "$DMG" --wait \
+            --apple-id "${{ secrets.NOTARY_APPLE_ID }}" \
+            --team-id "${{ secrets.NOTARY_TEAM_ID }}" \
+            --password "${{ secrets.NOTARY_APP_PASSWORD }}"
+          xcrun stapler staple "$DMG"
+
+      # Sparkle's tools come with the package the app builds against.
+      - name: Generate the Sparkle appcast
+        if: env.HAS_SPARKLE_KEY == 'true'
+        run: |
+          TOOLS="$(find build/Release/SourcePackages/artifacts -type d -path '*Sparkle/bin' | head -1)"
+          mkdir -p updates
+          cp build/ToastNote-*.dmg updates/
+          echo "${{ secrets.SPARKLE_PRIVATE_KEY }}" | "$TOOLS/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/" \
+            updates
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FILES=(build/ToastNote-*.dmg)
+          [ -f updates/appcast.xml ] && FILES+=(updates/appcast.xml)
+          gh release create "${{ github.ref_name }}" "${FILES[@]}" --title "${{ github.ref_name }}" --generate-notes

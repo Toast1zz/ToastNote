@@ -13,6 +13,9 @@ settings:
 packages:
   ToastNoteKit:
     path: Packages/ToastNoteKit
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.10.0
 targets:
   ToastNote:
     type: application
@@ -26,12 +29,19 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"
+        SUFeedURL: "https://github.com/$(GITHUB_REPOSITORY)/releases/latest/download/appcast.xml"
+        SUPublicEDKey: "$(SPARKLE_PUBLIC_KEY)"
+        SUEnableAutomaticChecks: true
         NSHumanReadableCopyright: "MIT License"
     entitlements:
       path: App/ToastNote.entitlements   # empty dict: no sandbox
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.toastnote.mac
+        # Set by the release workflow (github.repository). The owner here is a placeholder for local builds.
+        GITHUB_REPOSITORY: OWNER/ToastNote
+        # EdDSA public key from Sparkle's generate_keys; empty disables updates (see docs/RELEASING.md).
+        SPARKLE_PUBLIC_KEY: ""
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
     dependencies:
@@ -40,3 +50,4 @@ targets:
       - { package: ToastNoteKit, product: AIFormatKit }
       - { package: ToastNoteKit, product: IndexKit }
       - { package: ToastNoteKit, product: ExportKit }
+      - { package: Sparkle, product: Sparkle }
