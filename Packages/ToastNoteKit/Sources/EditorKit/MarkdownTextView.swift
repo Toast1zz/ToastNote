@@ -35,6 +35,16 @@ public final class MarkdownTextView: NSTextView {
     /// Decorations to draw (Task 13).
     private(set) var decorations: [Decoration] = []
 
+    /// Replaces the adaptive side inset, e.g. for the narrow panes of the review window.
+    public var fixedHorizontalInset: CGFloat? {
+        didSet { updateLayoutInsets() }
+    }
+
+    /// Short labels drawn in the left gutter next to a block (block index → text), with a thin accent bar.
+    public var blockLabels: [Int: String] = [:] {
+        didSet { publishBlockLabels() }
+    }
+
     private let concealingLayoutManager: ConcealingLayoutManager
     private let concealAll: Bool
 
@@ -187,6 +197,7 @@ public final class MarkdownTextView: NSTextView {
         decorations = result.decorations
         concealingLayoutManager.decorations = result.decorations
         concealingLayoutManager.theme = theme
+        publishBlockLabels()
         typingAttributes = base
         needsDisplay = true
     }
@@ -371,13 +382,50 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    // MARK: Block geometry and one-step edits (used by the review window)
+
+    /// Replaces `range` as a single undoable edit named `actionName`.
+    public func applyEdit(range: NSRange, replacement: String, actionName: String) {
+        perform(
+            TextEdit(range: range, replacement: replacement, selectionAfter: NSRange(location: range.location + (replacement as NSString).length, length: 0)),
+            actionName: actionName
+        )
+    }
+
+    /// Y position (view coordinates) of the first line of block `index`.
+    public func blockTop(at index: Int) -> CGFloat? {
+        guard blocks.indices.contains(index), concealingLayoutManager.numberOfGlyphs > 0 else { return nil }
+        let location = min(blocks[index].range.location, max((string as NSString).length - 1, 0))
+        concealingLayoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: (string as NSString).length))
+        let glyph = concealingLayoutManager.glyphIndexForCharacter(at: location)
+        return concealingLayoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + textContainerOrigin.y
+    }
+
+    /// The block that is at, or most recently started above, view coordinate `y`; clamped to the document.
+    public func blockIndexAt(y: CGFloat) -> Int? {
+        guard !blocks.isEmpty else { return nil }
+        var result = 0
+        for index in blocks.indices {
+            guard let top = blockTop(at: index) else { continue }
+            if top <= y { result = index } else { break }
+        }
+        return result
+    }
+
+    private func publishBlockLabels() {
+        concealingLayoutManager.blockLabels = blockLabels.compactMap { index, label in
+            blocks.indices.contains(index) ? (blocks[index].range, label) : nil
+        }
+        needsDisplay = true
+    }
+
     // MARK: Layout
 
     /// Sizes the text column to the window (see `EditorTheme.horizontalInset`), 56 pt above the first line.
     /// The bottom padding (40% of the visible height) lives in the scroll view's content insets, because
     /// `textContainerInset` is symmetric.
     private func updateLayoutInsets() {
-        let horizontal = theme.horizontalInset(forWidth: bounds.width)
+        let horizontal = fixedHorizontalInset ?? theme.horizontalInset(forWidth: bounds.width)
         let inset = NSSize(width: horizontal, height: 56)
         if textContainerInset != inset { textContainerInset = inset }
         if let scrollView = enclosingScrollView {

@@ -1,9 +1,11 @@
 import Foundation
+import Observation
 
 /// Providers, the selected one and the extra prompt text, kept in `UserDefaults` (API keys live in the
 /// keychain, see `KeychainStore`).
+@Observable
 public final class ProviderStore {
-    private let defaults: UserDefaults
+    @ObservationIgnored private let defaults: UserDefaults
     private static let providersKey = "aiProviders"
     private static let currentKey = "aiCurrentProvider"
     private static let extraKey = "aiExtraInstructions"

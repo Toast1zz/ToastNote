@@ -8,6 +8,8 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     var hidden = IndexSet()
     var decorations: [Decoration] = []
     var theme = EditorTheme.default
+    /// Labelled blocks of the review window: a 2 pt accent bar in the gutter plus a small label.
+    var blockLabels: [(range: NSRange, label: String)] = []
 
     override init() {
         super.init()
@@ -136,6 +138,21 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         guard !decorations.isEmpty, let container = textContainers.first else { return }
         let visible = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
         let accent = NSColor.controlAccentColor
+
+        for (range, label) in blockLabels where intersects(range, visible) {
+            let rects = lineRects(for: range)
+            guard let first = rects.first, let last = rects.last else { continue }
+            let bar = NSRect(x: -12, y: first.minY, width: 2, height: last.maxY - first.minY)
+            fill(bar, origin: origin, radius: 1, color: accent)
+            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: accent]
+            let size = (label as NSString).size(withAttributes: attributes)
+            // Right-aligned against the bar, level with the first line of text.
+            let baseline = self.baseline(ofCharacterAt: range.location)
+            (label as NSString).draw(
+                at: NSPoint(x: origin.x - 18 - size.width, y: origin.y + baseline - size.height * 0.8),
+                withAttributes: attributes
+            )
+        }
 
         for decoration in decorations {
             switch decoration {
