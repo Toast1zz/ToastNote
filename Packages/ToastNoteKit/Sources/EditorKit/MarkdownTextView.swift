@@ -53,6 +53,27 @@ public final class MarkdownTextView: NSTextView {
         didSet { restyleAll() }
     }
 
+    /// Hint drawn in an empty, editable note.
+    public var placeholder: String? {
+        didSet { needsDisplay = true }
+    }
+
+    var showsPlaceholder: Bool { placeholder != nil && isEditable && string.isEmpty }
+
+    public override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard showsPlaceholder, let placeholder else { return }
+        var attributes = theme.attributes(for: TextStyle(role: .body))
+        attributes[.foregroundColor] = NSColor.placeholderTextColor
+        let origin = textContainerOrigin
+        let padding = textContainer?.lineFragmentPadding ?? 0
+        // Sits where the first typed character will go: fixed line heights put the text at the line's bottom.
+        let font = attributes[.font] as? NSFont ?? .systemFont(ofSize: theme.bodySize)
+        let lineHeight = 1.75 * theme.bodySize
+        let top = origin.y + lineHeight - font.ascender + font.descender - 2
+        (placeholder as NSString).draw(at: NSPoint(x: origin.x + padding, y: max(origin.y, top)), withAttributes: attributes)
+    }
+
     /// Ranges currently marked as search matches; cleared by the next edit.
     public private(set) var highlightedRanges: [NSRange] = []
 
@@ -708,6 +729,8 @@ public final class MarkdownTextView: NSTextView {
 
     public override func didChangeText() {
         super.didChangeText()
+        // The placeholder appears or disappears around the first character.
+        if placeholder != nil, (string as NSString).length <= 1 { needsDisplay = true }
         // Restyling while an input method is composing breaks its candidate window (spec §7.4).
         guard !hasMarkedText() else { return }
         restyleAfterEdit()

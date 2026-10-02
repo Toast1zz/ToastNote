@@ -51,20 +51,29 @@ struct SearchResultsList: View {
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            List(model.searchResults, id: \.path) { hit in
-                Button { model.openSearchResult(hit) } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(hit.title).lineLimit(1)
-                        Text(Self.highlighted(hit.snippet))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
+            List {
+                Section {
+                    ForEach(model.searchResults, id: \.path) { hit in
+                        Button { model.openSearchResult(hit) } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(hit.title).fontWeight(.medium).lineLimit(1)
+                                Text(Self.highlighted(hit.snippet))
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                            .padding(.vertical, 5)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(hit.path)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                } header: {
+                    Text("\(model.searchResults.count) 篇笔记")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-                .help(hit.path)
             }
             .listStyle(.sidebar)
         }

@@ -19,6 +19,7 @@ struct LiveEditorView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = MarkdownTextView(theme: theme)
+        textView.placeholder = "开始输入…"
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.markdown = session.text

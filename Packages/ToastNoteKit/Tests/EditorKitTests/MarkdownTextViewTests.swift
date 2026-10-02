@@ -118,6 +118,15 @@ private func isHidden(_ view: MarkdownTextView, character: Int) -> Bool {
         #expect(pasteboard.string(forType: .string) == "**粗**")
     }
 
+    @Test func emptyEditableNoteShowsAPlaceholder() {
+        let view = makeView("")
+        view.placeholder = "开始输入…"
+        #expect(view.showsPlaceholder)
+        view.insertText("a", replacementRange: NSRange(location: 0, length: 0))
+        #expect(!view.showsPlaceholder)
+        #expect(!makeView("", concealAll: true).showsPlaceholder)
+    }
+
     @Test func readOnlyPaneStartsAtTheTop() {
         // NSTextView keeps the insertion point visible when it resizes; at the end of the text that would
         // scroll a freshly opened review pane down.
