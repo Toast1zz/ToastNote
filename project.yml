@@ -1,6 +1,7 @@
 name: ToastNote
 options:
   bundleIdPrefix: app.toastnote
+  developmentLanguage: zh-Hans
   deploymentTarget:
     macOS: "14.0"
 settings:
@@ -26,6 +27,9 @@ targets:
       properties:
         CFBundleName: ToastNote
         CFBundleDisplayName: ToastNote
+        # The interface is Chinese; this also localizes the system-provided menus (File, Edit, Window...).
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans]
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"

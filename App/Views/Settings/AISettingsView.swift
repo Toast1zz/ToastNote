@@ -88,9 +88,9 @@ struct AISettingsView: View {
                     Text("Anthropic").tag(ProviderKind.anthropic)
                 }
                 TextField("Base URL", text: $draft.baseURL)
-                TextField("模型", text: $draft.model, prompt: Text("例如 deepseek-flash"))
+                TextField("模型", text: $draft.model, prompt: Text("模型名称，见服务商文档"))
                 if draft.requiresKey {
-                    SecureField("API Key", text: $apiKey)
+                    SecureField("API Key", text: $apiKey, prompt: Text("粘贴 API Key，保存在钥匙串中"))
                 } else {
                     Text("此服务商不需要 API Key").foregroundStyle(.secondary)
                 }

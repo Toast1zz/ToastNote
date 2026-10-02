@@ -137,9 +137,17 @@ struct MainWindow: View {
             .id(ObjectIdentifier(session))
             .navigationTitle(((session.path as NSString).lastPathComponent as NSString).deletingPathExtension)
         } else {
-            Text("按 ⌘N 新建笔记，或按 ⌘P 打开")
-                .foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ContentUnavailableView {
+                Label("没有打开的笔记", systemImage: "square.and.pencil")
+            } description: {
+                Text("新建一篇，或从左侧选择一篇笔记。")
+            } actions: {
+                Button("新建笔记") { model.newNote() }
+                    .buttonStyle(.borderedProminent)
+                Button("快速打开…") { model.isQuickOpenPresented = true }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .textBackgroundColor))
         }
     }
 }

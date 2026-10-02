@@ -11,7 +11,7 @@ struct SettingsWindow: View {
             GeneralSettingsView(model: model)
                 .tabItem { Label("通用", systemImage: "gearshape") }
             EditorSettingsView()
-                .tabItem { Label("编辑器", systemImage: "textformat") }
+                .tabItem { Label("编辑器", systemImage: "character.cursor.ibeam") }
             AISettingsView(controller: controller)
                 .tabItem { Label("AI", systemImage: "wand.and.stars") }
             UpdateSettingsView(updates: updates)

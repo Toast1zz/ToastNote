@@ -11,7 +11,7 @@ struct SidebarSearchField: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            TextField("搜索  ⌘⇧F", text: $model.searchText)
+            TextField("搜索", text: $model.searchText)
                 .textFieldStyle(.plain)
                 .focused($isFocused)
                 .accessibilityLabel("搜索笔记")
@@ -34,6 +34,8 @@ struct SidebarSearchField: View {
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(0.06)))
         .padding(.horizontal, 10)
         .padding(.top, 6)
+        .padding(.bottom, 8)
+        .help("搜索所有笔记（⌘⇧F）")
         .onChange(of: model.searchFocusToken) { _, _ in isFocused = true }
     }
 }

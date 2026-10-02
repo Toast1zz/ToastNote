@@ -46,7 +46,9 @@ final class ReviewScrollSync {
         guard let mapped = mappedBlock(index, from: side),
               let targetTop = target.textView.blockTop(at: mapped) else { return }
         let targetNext = target.textView.blockTop(at: mapped + 1) ?? (targetTop + 1)
-        let y = targetTop + fraction * (targetNext - targetTop)
+        var y = targetTop + fraction * (targetNext - targetTop)
+        // Above the first block (the top margin) the panes move together, so top stays level with top.
+        if index == 0, top < sourceTop { y = top * targetTop / max(sourceTop, 1) }
 
         isApplying = true
         let maxY = max(target.textView.frame.height - target.scrollView.contentView.bounds.height, 0)

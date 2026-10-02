@@ -35,6 +35,16 @@ func touch(_ root: URL, _ relative: String, _ contents: String = "") throws {
         #expect(tree.folders.isEmpty)
     }
 
+    @Test func attachmentsFolderIsHiddenUnlessItHoldsNotes() throws {
+        let root = try makeTempVault()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try touch(root, "attachments/20260101-000000-abcd.png")
+        try touch(root, "资料/attachments/x.png")
+        #expect(try VaultScanner.scan(root: root).folders.map(\.name) == ["资料"])
+        try touch(root, "attachments/说明.md")
+        #expect(Set(try VaultScanner.scan(root: root).folders.map(\.name)) == ["attachments", "资料"])
+    }
+
     @Test func nestedFolders() throws {
         let root = try makeTempVault()
         defer { try? FileManager.default.removeItem(at: root) }
