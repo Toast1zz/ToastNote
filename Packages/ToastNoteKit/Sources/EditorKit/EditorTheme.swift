@@ -37,18 +37,24 @@ public struct TextStyle: Hashable, Sendable {
     }
 }
 
-public struct EditorTheme: Sendable {
+public struct EditorTheme: Sendable, Equatable {
     /// 13...20, spec §9.3.
     public var bodySize: CGFloat = 15
     /// The widest the text column grows, 600...1200. It follows the window up to this cap (see `horizontalInset`).
     public var maxContentWidth: CGFloat = 960
 
+    /// With the system's "Increase contrast" setting, secondary text uses the primary label color (spec §9.7).
+    public var increasedContrast = false
+
     public static let `default` = EditorTheme()
 
-    public init(bodySize: CGFloat = 15, maxContentWidth: CGFloat = 960) {
+    public init(bodySize: CGFloat = 15, maxContentWidth: CGFloat = 960, increasedContrast: Bool = false) {
         self.bodySize = min(max(bodySize, 13), 20)
         self.maxContentWidth = min(max(maxContentWidth, 600), 1200)
+        self.increasedContrast = increasedContrast
     }
+
+    private var secondaryColor: NSColor { increasedContrast ? .labelColor : .secondaryLabelColor }
 
     /// Space on each side of the text column for a view `width` points wide. The sides are 12% of the width, so
     /// the column grows with the window; wide windows stop at `maxContentWidth` and center the column, and
@@ -84,19 +90,19 @@ public struct EditorTheme: Sendable {
             attributes[.foregroundColor] = NSColor.labelColor
         case .quote:
             attributes[.font] = font(size: bodySize, weight: .regular, style: style)
-            attributes[.foregroundColor] = NSColor.secondaryLabelColor
+            attributes[.foregroundColor] = secondaryColor
         case .link, .tag:
             attributes[.font] = font(size: bodySize, weight: .regular, style: style)
             attributes[.foregroundColor] = NSColor.controlAccentColor
         case .marker:
-            attributes[.foregroundColor] = NSColor.secondaryLabelColor
+            attributes[.foregroundColor] = secondaryColor
         case .taskDone:
             attributes[.font] = font(size: bodySize, weight: .regular, style: style)
-            attributes[.foregroundColor] = NSColor.secondaryLabelColor
+            attributes[.foregroundColor] = secondaryColor
             attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         case .frontmatterSummary:
             attributes[.font] = NSFont.systemFont(ofSize: bodySize)
-            attributes[.foregroundColor] = NSColor.secondaryLabelColor
+            attributes[.foregroundColor] = secondaryColor
         case .imagePlaceholder:
             // The picture is drawn over this character's line; the character itself must not show.
             attributes[.font] = NSFont.systemFont(ofSize: 1)

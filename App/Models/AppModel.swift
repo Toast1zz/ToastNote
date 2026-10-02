@@ -22,6 +22,9 @@ final class AppModel {
     var columnVisibility: NavigationSplitViewVisibility = .all
     var errorMessage: String?
     var isQuickOpenPresented = false
+    /// ⌘⇧↩: sidebar and toolbar hidden, only the text left.
+    private(set) var isFocusMode = false
+    @ObservationIgnored private var visibilityBeforeFocus: NavigationSplitViewVisibility = .all
 
     // MARK: Index, tags and search state
     private(set) var tagCounts: [TagCount] = []
@@ -66,7 +69,18 @@ final class AppModel {
                 MainActor.assumeIsolated { self?.flushAll() }
             })
         }
-        reopenLastVault()
+        if defaults.object(forKey: SettingsKey.openLastVault) as? Bool ?? true { reopenLastVault() }
+    }
+
+    func toggleFocusMode() {
+        if isFocusMode {
+            isFocusMode = false
+            columnVisibility = visibilityBeforeFocus
+        } else {
+            visibilityBeforeFocus = columnVisibility
+            isFocusMode = true
+            columnVisibility = .detailOnly
+        }
     }
 
     // MARK: Vault

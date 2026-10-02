@@ -1,3 +1,5 @@
+import AppKit
+import Combine
 import EditorKit
 import SwiftUI
 import VaultKit
@@ -6,6 +8,15 @@ struct MainWindow: View {
     @Bindable var model: AppModel
     let formatController: FormatController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(SettingsKey.editorFontSize) private var fontSize = 15.0
+    @AppStorage(SettingsKey.editorMaxWidth) private var maxWidth = 960.0
+    @AppStorage(SettingsKey.editorSpellCheck) private var spellCheck = false
+    @AppStorage(SettingsKey.appearance) private var appearance = AppAppearance.system.rawValue
+    @State private var increasedContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+
+    private var theme: EditorTheme {
+        EditorTheme(bodySize: fontSize, maxContentWidth: maxWidth, increasedContrast: increasedContrast)
+    }
 
     var body: some View {
         Group {
@@ -19,6 +30,7 @@ struct MainWindow: View {
                     detail
                 }
                 .toolbar { toolbarContent }
+                .toolbar(model.isFocusMode ? .hidden : .automatic, for: .windowToolbar)
             }
         }
         .frame(minWidth: 640, minHeight: 420)
@@ -30,8 +42,14 @@ struct MainWindow: View {
                 FormatReviewSheet(controller: formatController, outcome: outcome)
             }
         }
-        // Esc cancels a running request.
-        .onExitCommand { if formatController.isRunning { formatController.cancel() } }
+        // Esc cancels a running request, or leaves focus mode.
+        .onExitCommand {
+            if formatController.isRunning { formatController.cancel() } else if model.isFocusMode { model.toggleFocusMode() }
+        }
+        .onChange(of: appearance, initial: true) { _, new in AppAppearance.apply(new) }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification)) { _ in
+            increasedContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        }
         .overlay(alignment: .top) {
             if model.isQuickOpenPresented {
                 QuickOpenPanel(model: model)
@@ -111,7 +129,7 @@ struct MainWindow: View {
                         }
                     })
                 }
-                LiveEditorView(session: session, theme: .default, vaultRoot: model.vaultRoot ?? URL(fileURLWithPath: "/")) {
+                LiveEditorView(session: session, theme: theme, spellCheck: spellCheck, vaultRoot: model.vaultRoot ?? URL(fileURLWithPath: "/")) {
                     model.activeTextView = $0
                     model.applyPendingHighlight(to: $0)
                 }

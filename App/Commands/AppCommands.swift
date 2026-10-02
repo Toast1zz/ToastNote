@@ -5,6 +5,7 @@ import SwiftUI
 struct AppCommands: Commands {
     let model: AppModel
     let formatController: FormatController
+    let updates: UpdateController
 
     /// Menu item that forwards to the focused editor through the responder chain.
     private func formatButton(_ title: String, key: KeyEquivalent, modifiers: EventModifiers, action: Selector) -> some View {
@@ -14,6 +15,10 @@ struct AppCommands: Commands {
     }
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("检查更新…") { updates.checkForUpdates() }
+                .disabled(!updates.canCheckForUpdates)
+        }
         CommandGroup(replacing: .newItem) {
             Button("新建笔记") { model.newNote() }
                 .keyboardShortcut("n")
@@ -63,6 +68,11 @@ struct AppCommands: Commands {
             formatButton("删除线", key: "x", modifiers: [.command, .shift], action: #selector(MarkdownTextView.toggleStrikethrough(_:)))
             formatButton("行内代码", key: "e", modifiers: .command, action: #selector(MarkdownTextView.toggleInlineCode(_:)))
             formatButton("插入链接", key: "k", modifiers: .command, action: #selector(MarkdownTextView.insertMarkdownLink(_:)))
+        }
+        CommandGroup(after: .toolbar) {
+            Button(model.isFocusMode ? "退出专注模式" : "专注模式") { model.toggleFocusMode() }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+                .disabled(model.currentSession == nil && !model.isFocusMode)
         }
         CommandGroup(replacing: .sidebar) {
             Button("显示或隐藏侧边栏") {

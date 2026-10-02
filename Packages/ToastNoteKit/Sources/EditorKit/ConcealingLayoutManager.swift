@@ -253,7 +253,7 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         let size = theme.bodySize
         let rect = gutterRect(forMarkerAt: index, size: size).offsetBy(dx: origin.x, dy: origin.y)
         let diameter = size * 0.3
-        NSColor.secondaryLabelColor.setFill()
+        (theme.increasedContrast ? NSColor.labelColor : NSColor.secondaryLabelColor).setFill()
         // The dot sits in the right half of the gutter, next to the text.
         NSBezierPath(ovalIn: NSRect(x: rect.maxX - diameter - 2, y: rect.midY - diameter / 2, width: diameter, height: diameter)).fill()
     }
@@ -264,7 +264,7 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         let name = done ? "checkmark.square.fill" : "square"
         guard let image = NSImage(systemSymbolName: name, accessibilityDescription: done ? "已完成" : "未完成") else { return }
         // Palette: the first color is the checkmark, the second the filled square.
-        let colors: [NSColor] = done ? [.white, .controlAccentColor] : [.secondaryLabelColor]
+        let colors: [NSColor] = done ? [.white, .controlAccentColor] : [theme.increasedContrast ? .labelColor : .secondaryLabelColor]
         let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
             .applying(.init(paletteColors: colors))
         image.withSymbolConfiguration(configuration)?.draw(in: rect)

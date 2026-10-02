@@ -24,5 +24,11 @@
 	<string>14.0</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT License</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/$(GITHUB_REPOSITORY)/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>$(SPARKLE_PUBLIC_KEY)</string>
 </dict>
 </plist>

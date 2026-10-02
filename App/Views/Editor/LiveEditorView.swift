@@ -9,6 +9,7 @@ extension AttachmentStore: AttachmentSaving {}
 struct LiveEditorView: NSViewRepresentable {
     let session: NoteSession
     let theme: EditorTheme
+    var spellCheck = false
     /// The vault the note lives in, for finding images and storing pasted ones.
     let vaultRoot: URL
     /// Reports the hosted text view (or nil on teardown) so commands, AI and search can reach it.
@@ -22,6 +23,7 @@ struct LiveEditorView: NSViewRepresentable {
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.markdown = session.text
         textView.isEditable = session.loadError == nil
+        textView.isContinuousSpellCheckingEnabled = spellCheck
         textView.onTextChange = { [session] text in session.userEdited(text) }
         textView.vaultContext = (vaultRoot, session.path, AttachmentStore(vaultRoot: vaultRoot))
 
@@ -46,9 +48,8 @@ struct LiveEditorView: NSViewRepresentable {
         if textView.vaultContext?.notePath != session.path {
             textView.vaultContext = (vaultRoot, session.path, AttachmentStore(vaultRoot: vaultRoot))
         }
-        if textView.theme.bodySize != theme.bodySize || textView.theme.maxContentWidth != theme.maxContentWidth {
-            textView.theme = theme
-        }
+        if textView.theme != theme { textView.theme = theme }
+        textView.isContinuousSpellCheckingEnabled = spellCheck
         guard textView.string != session.text else { return }
         // An external reload: keep the caret and scroll position when they still make sense.
         let selection = textView.selectedRange()
