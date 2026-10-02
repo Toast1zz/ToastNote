@@ -20,6 +20,9 @@ struct AppCommands: Commands {
                 .disabled(model.vaultRoot == nil)
             Button("打开笔记库…") { model.chooseVault() }
                 .keyboardShortcut("o")
+            Button("导出 PDF…") { model.exportPDF() }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(model.currentSession == nil || model.isExporting)
             Button("搜索笔记") { model.focusSearch() }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .disabled(model.vaultRoot == nil)

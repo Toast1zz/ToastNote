@@ -1,0 +1,51 @@
+/* Print stylesheet: the reading layout of spec §9.3, always in light colors (spec §10.6). */
+@page { size: A4; margin: 20mm }
+:root { color-scheme: light }
+html { -webkit-text-size-adjust: none; -webkit-print-color-adjust: exact; print-color-adjust: exact }
+body {
+  margin: 0;
+  background: #ffffff;
+  color: #1d1d1f;
+  font: 15px/1.75 -apple-system, "PingFang SC", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  overflow-wrap: anywhere;
+}
+h1, h2, h3, h4, h5, h6 { color: #1d1d1f; break-after: avoid; }
+h1 { font-size: 28px; font-weight: 700; line-height: 1.35; letter-spacing: -0.01em; margin: 1.2em 0 0.4em; }
+h2 { font-size: 22px; font-weight: 600; line-height: 1.35; margin: 1.1em 0 0.35em; }
+h3 { font-size: 19px; font-weight: 600; line-height: 1.35; margin: 1em 0 0.3em; }
+h4, h5, h6 { font-size: 16px; font-weight: 600; line-height: 1.35; margin: 0.9em 0 0.25em; }
+body > :first-child { margin-top: 0; }
+p { margin: 0 0 0.6em; }
+a { color: #0a64d8; text-decoration: none; }
+ul, ol { margin: 0 0 0.6em; padding-left: 1.6em; }
+li { margin: 0.15em 0; }
+li > input[type="checkbox"] { margin: 0 0.4em 0 -1.4em; vertical-align: middle; }
+blockquote {
+  margin: 0 0 0.6em;
+  padding-left: 16px;
+  border-left: 3px solid rgba(10, 100, 216, 0.4);
+  color: #6e6e73;
+  break-inside: avoid;
+}
+code {
+  font: 13px "SF Mono", Menlo, Monaco, monospace;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+pre {
+  margin: 0 0 0.8em;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 6px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  break-inside: avoid;
+}
+pre code { padding: 0; background: none; border-radius: 0; }
+img { max-width: 100%; height: auto; border-radius: 6px; break-inside: avoid; }
+table { width: 100%; margin: 0 0 0.8em; border-collapse: collapse; break-inside: avoid; }
+th, td { padding: 4px 8px; border: 1px solid #d2d2d7; text-align: left; }
+th { font-weight: 600; background: rgba(0, 0, 0, 0.03); }
+hr { margin: 1.2em 0; border: 0; border-top: 1px solid #d2d2d7; }
+.tag { padding: 0 0.5em; border-radius: 999px; background: rgba(10, 100, 216, 0.12); color: #0a64d8; white-space: nowrap; }

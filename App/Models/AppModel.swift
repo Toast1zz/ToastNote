@@ -1,5 +1,7 @@
 import AppKit
 import EditorKit
+import ExportKit
+import UniformTypeIdentifiers
 import IndexKit
 import Observation
 import SwiftUI
@@ -501,6 +503,50 @@ final class AppModel {
                 refreshTree()
             } catch {
                 errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    // MARK: PDF export (spec §10.6)
+
+    private(set) var isExporting = false
+    /// Set by tests and automation to skip the save panel.
+    @ObservationIgnored var exportDestinationOverride: URL?
+
+    /// ⌘⇧E: saves the open note as an A4 PDF in light colors, paginated.
+    func exportPDF() {
+        guard let session = currentSession, let root = vaultRoot, !isExporting else { return }
+        session.saveNow()
+        let title = ((session.path as NSString).lastPathComponent as NSString).deletingPathExtension
+        let destination: URL
+        #if DEBUG
+        // Automation hook for debug builds: skips the save panel.
+        let environmentTarget = ProcessInfo.processInfo.environment["TOASTNOTE_EXPORT_TO"].map { URL(fileURLWithPath: $0) }
+        #else
+        let environmentTarget: URL? = nil
+        #endif
+        if let override = exportDestinationOverride ?? environmentTarget {
+            destination = override
+        } else {
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.pdf]
+            panel.nameFieldStringValue = title + ".pdf"
+            panel.canCreateDirectories = true
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            destination = url
+        }
+        let html = HTMLRenderer.render(markdown: session.text, notePath: session.path, vaultRoot: root, title: title)
+        isExporting = true
+        Task {
+            defer { isExporting = false }
+            do {
+                // The page file lives in the vault's hidden folder so the page may read the vault's images.
+                try await PDFExporter().export(
+                    html: html, baseURL: root.appendingPathComponent(".toastnote"), readAccess: root, to: destination
+                )
+                NSWorkspace.shared.activateFileViewerSelecting([destination])
+            } catch {
+                errorMessage = "导出 PDF 失败：\(error.localizedDescription)"
             }
         }
     }

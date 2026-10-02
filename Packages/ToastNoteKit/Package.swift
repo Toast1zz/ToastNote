@@ -19,7 +19,10 @@ let package = Package(
         .target(name: "EditorKit", dependencies: [.product(name: "Markdown", package: "swift-markdown")]),
         .target(name: "AIFormatKit", dependencies: ["EditorKit"]),
         .target(name: "IndexKit", dependencies: ["VaultKit", "EditorKit"]),
-        .target(name: "ExportKit", dependencies: ["EditorKit", .product(name: "Markdown", package: "swift-markdown")]),
+        .target(
+            name: "ExportKit", dependencies: ["EditorKit", .product(name: "Markdown", package: "swift-markdown")],
+            resources: [.process("Resources")]
+        ),
         .testTarget(name: "VaultKitTests", dependencies: ["VaultKit"]),
         .testTarget(name: "EditorKitTests", dependencies: ["EditorKit"]),
         .testTarget(name: "AIFormatKitTests", dependencies: ["AIFormatKit"]),

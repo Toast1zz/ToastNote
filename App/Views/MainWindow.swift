@@ -77,6 +77,14 @@ struct MainWindow: View {
             .disabled(model.currentSession == nil)
         }
         ToolbarItem(placement: .primaryAction) {
+            Button { model.exportPDF() } label: {
+                if model.isExporting { ProgressView().controlSize(.small) } else { Label("导出", systemImage: "square.and.arrow.up") }
+            }
+            .help("导出 PDF ⌘⇧E")
+            .accessibilityLabel("导出 PDF")
+            .disabled(model.currentSession == nil || model.isExporting)
+        }
+        ToolbarItem(placement: .primaryAction) {
             Menu {
                 Button("新建文件夹") { model.newFolder() }
                 Divider()
