@@ -1,3 +1,4 @@
+import EditorKit
 import Foundation
 
 public struct GuardResult: Equatable, Sendable {
