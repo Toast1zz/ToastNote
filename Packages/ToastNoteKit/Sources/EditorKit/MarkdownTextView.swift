@@ -132,6 +132,75 @@ public final class MarkdownTextView: NSTextView {
         apply(result, in: union)
     }
 
+    // MARK: Editing commands (spec §7.5)
+
+    /// Applies an edit through the normal text-change path so it is a single undo step.
+    private func perform(_ edit: TextEdit, actionName: String? = nil) {
+        guard shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
+        replaceCharacters(in: edit.range, with: edit.replacement)
+        didChangeText()
+        setSelectedRange(edit.selectionAfter)
+        if let actionName { undoManager?.setActionName(actionName) }
+    }
+
+    private func wrapSelection(_ marker: String, actionName: String) {
+        perform(EditingCommands.toggleWrap(marker, text: string as NSString, selection: selectedRange()), actionName: actionName)
+    }
+
+    @objc public func toggleBold(_ sender: Any?) { wrapSelection("**", actionName: "粗体") }
+    @objc public func toggleItalic(_ sender: Any?) { wrapSelection("*", actionName: "斜体") }
+    @objc public func toggleStrikethrough(_ sender: Any?) { wrapSelection("~~", actionName: "删除线") }
+    @objc public func toggleInlineCode(_ sender: Any?) { wrapSelection("`", actionName: "行内代码") }
+    @objc public func insertMarkdownLink(_ sender: Any?) {
+        perform(EditingCommands.insertLink(text: string as NSString, selection: selectedRange()), actionName: "插入链接")
+    }
+
+    public override func insertNewline(_ sender: Any?) {
+        if !hasMarkedText(), selectedRange().length == 0,
+           let edit = EditingCommands.newline(text: string as NSString, caret: selectedRange().location) {
+            perform(edit)
+        } else {
+            super.insertNewline(sender)
+        }
+    }
+
+    public override func insertTab(_ sender: Any?) {
+        if let edit = EditingCommands.indent(text: string as NSString, selection: selectedRange(), outdent: false) {
+            perform(edit)
+        } else {
+            super.insertTab(sender)
+        }
+    }
+
+    public override func insertBacktab(_ sender: Any?) {
+        if let edit = EditingCommands.indent(text: string as NSString, selection: selectedRange(), outdent: true) {
+            perform(edit)
+        } else {
+            super.insertBacktab(sender)
+        }
+    }
+
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown, window?.firstResponder === self, isEditable else {
+            return super.performKeyEquivalent(with: event)
+        }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let key = event.charactersIgnoringModifiers?.lowercased()
+        switch (flags, key) {
+        case ([.command], "b"): toggleBold(nil)
+        case ([.command], "i"): toggleItalic(nil)
+        case ([.command], "e"): toggleInlineCode(nil)
+        case ([.command], "k"): insertMarkdownLink(nil)
+        case ([.command, .shift], "x"): toggleStrikethrough(nil)
+        default: return super.performKeyEquivalent(with: event)
+        }
+        return true
+    }
+
+    /// Rich text from the web pastes as plain text; the styler then applies the editor's own styles.
+    /// ⌘⇧⌥V keeps its system meaning (spec §7.5).
+    public override var readablePasteboardTypes: [NSPasteboard.PasteboardType] { [.string] }
+
     // MARK: Tasks and links
 
     /// Flips `[ ]` and `[x]` of the task item at `index` as one undoable edit.
