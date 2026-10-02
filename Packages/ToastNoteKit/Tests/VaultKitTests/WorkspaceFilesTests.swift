@@ -46,6 +46,23 @@ import Testing
         #expect(WorkspaceFiles.loadSession(vault: vault, base: base) == session)
     }
 
+    @Test func sessionDecodesWithoutRecent() throws {
+        // Session files written before quick open existed have no "recent" key.
+        let json = #"{"open":["a.md"],"current":"a.md","collapsedSections":["标签"]}"#
+        let session = try JSONDecoder().decode(SessionFile.self, from: Data(json.utf8))
+        #expect(session.recent.isEmpty)
+        #expect(session.open == ["a.md"])
+    }
+
+    @Test func recentRoundTrips() throws {
+        let vault = try makeTempVault()
+        let base = try makeTempVault()
+        defer { try? FileManager.default.removeItem(at: vault); try? FileManager.default.removeItem(at: base) }
+        let session = SessionFile(open: [], current: nil, collapsedSections: [], recent: ["x.md", "y.md"])
+        try WorkspaceFiles.save(session, vault: vault, base: base)
+        #expect(WorkspaceFiles.loadSession(vault: vault, base: base).recent == ["x.md", "y.md"])
+    }
+
     @Test func corruptSessionYieldsEmpty() throws {
         let vault = try makeTempVault()
         let base = try makeTempVault()

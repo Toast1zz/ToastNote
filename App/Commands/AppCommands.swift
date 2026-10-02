@@ -19,6 +19,9 @@ struct AppCommands: Commands {
                 .disabled(model.vaultRoot == nil)
             Button("打开笔记库…") { model.chooseVault() }
                 .keyboardShortcut("o")
+            Button("快速打开…") { model.isQuickOpenPresented.toggle() }
+                .keyboardShortcut("p")
+                .disabled(model.vaultRoot == nil)
         }
         CommandGroup(replacing: .saveItem) {
             Button("保存") { model.saveNow() }

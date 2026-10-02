@@ -18,6 +18,9 @@ final class AppModel {
     var selection: String?
     var columnVisibility: NavigationSplitViewVisibility = .all
     var errorMessage: String?
+    var isQuickOpenPresented = false
+    /// Most recently opened notes, newest first (at most 10); quick open lists them for an empty query.
+    private(set) var recentPaths: [String] = []
 
     /// The editor of the open note, for commands, AI formatting and search highlights.
     @ObservationIgnored weak var activeTextView: MarkdownTextView?
@@ -147,7 +150,33 @@ final class AppModel {
         guard vaultRoot != nil, workspace.current != path else { return }
         leaveCurrent()
         workspace.open(path)
+        noteRecent(path)
         sessionsDidChange()
+    }
+
+    private func noteRecent(_ path: String) {
+        recentPaths.removeAll { $0 == path }
+        recentPaths.insert(path, at: 0)
+        recentPaths = Array(recentPaths.prefix(10))
+    }
+
+    /// Notes for quick open's empty query, skipping files that no longer exist.
+    func recentNotes() -> [NoteRef] {
+        let known = Dictionary(uniqueKeysWithValues: tree.allNotes().map { ($0.path, $0) })
+        return recentPaths.compactMap { known[$0] }
+    }
+
+    /// "新建笔记“xxx”" in quick open: a note named after the query, in the selected folder.
+    func createNote(titled title: String) {
+        let name = title.replacingOccurrences(of: "/", with: "-")
+        perform {
+            let folder = targetFolder
+            guard let note = try ops?.createNote(inFolder: folder) else { return }
+            let path = (try? ops?.rename(path: note.path, to: name)) ?? note.path
+            refreshTree()
+            if !folder.isEmpty { expandedFolders.insert(folder) }
+            open(path: path)
+        }
     }
 
     func selectNext() { change { $0.selectNext() } }
@@ -277,6 +306,7 @@ final class AppModel {
     private func restoreWorkspace(for root: URL) {
         let pinned = WorkspaceFiles.loadPinned(vault: root).pinned
         let session = WorkspaceFiles.loadSession(vault: root)
+        recentPaths = session.recent
         let exists: (String) -> Bool = { FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) }
         let pinnedAlive = pinned.filter(exists)
         let openAlive = session.open.filter { exists($0) && !pinnedAlive.contains($0) }
@@ -291,9 +321,13 @@ final class AppModel {
         guard let root = vaultRoot else { return }
         let state = workspace
         let collapsed = collapsedSections
+        let recent = recentPaths
         persistDebouncer.schedule {
             try? WorkspaceFiles.save(PinnedFile(pinned: state.pinned), vault: root)
-            try? WorkspaceFiles.save(SessionFile(open: state.open, current: state.current, collapsedSections: collapsed), vault: root)
+            try? WorkspaceFiles.save(
+                SessionFile(open: state.open, current: state.current, collapsedSections: collapsed, recent: recent),
+                vault: root
+            )
         }
     }
 
@@ -340,6 +374,7 @@ final class AppModel {
             guard let newPath = try ops?.rename(path: path, to: name) else { return }
             rekeySessions(from: path, to: newPath)
             workspace.apply(.renamed(from: path, to: newPath))
+            recentPaths = recentPaths.map { $0 == path ? newPath : $0 }
             if selection == path { selection = newPath }
             sessionsDidChange()
             refreshTree()

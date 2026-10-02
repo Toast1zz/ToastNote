@@ -15,11 +15,23 @@ public struct SessionFile: Codable, Equatable, Sendable {
     public var open: [String]
     public var current: String?
     public var collapsedSections: Set<String>
+    /// Most recently opened notes, newest first; feeds quick open when the query is empty.
+    public var recent: [String]
 
-    public init(open: [String], current: String?, collapsedSections: Set<String>) {
+    public init(open: [String], current: String?, collapsedSections: Set<String>, recent: [String] = []) {
         self.open = open
         self.current = current
         self.collapsedSections = collapsedSections
+        self.recent = recent
+    }
+
+    // Files written before `recent` existed must still load.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        open = try container.decode([String].self, forKey: .open)
+        current = try container.decodeIfPresent(String.self, forKey: .current)
+        collapsedSections = try container.decode(Set<String>.self, forKey: .collapsedSections)
+        recent = try container.decodeIfPresent([String].self, forKey: .recent) ?? []
     }
 }
 

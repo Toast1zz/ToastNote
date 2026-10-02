@@ -4,6 +4,7 @@ import VaultKit
 
 struct MainWindow: View {
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -20,6 +21,14 @@ struct MainWindow: View {
             }
         }
         .frame(minWidth: 640, minHeight: 420)
+        .overlay(alignment: .top) {
+            if model.isQuickOpenPresented {
+                QuickOpenPanel(model: model)
+                    .padding(.top, 56)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: model.isQuickOpenPresented)
         // Until session restore exists (M3) the window itself is the first interactive state.
         .onAppear { LaunchTiming.editorReady() }
         .alert("出错了", isPresented: Binding(
