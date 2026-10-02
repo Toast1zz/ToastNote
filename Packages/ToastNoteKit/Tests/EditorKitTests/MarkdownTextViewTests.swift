@@ -163,6 +163,50 @@ private func isHidden(_ view: MarkdownTextView, character: Int) -> Bool {
         #expect(view.textContainerInset == NSSize(width: 48, height: 56))
     }
 
+    @Test func highlightAddsTemporaryAttributes() {
+        let view = makeView("甲乙丙丁甲乙")
+        view.highlightRanges([NSRange(location: 0, length: 2), NSRange(location: 4, length: 2)])
+        let layoutManager = view.layoutManager!
+        #expect(layoutManager.temporaryAttribute(.backgroundColor, atCharacterIndex: 0, effectiveRange: nil) != nil)
+        #expect(layoutManager.temporaryAttribute(.backgroundColor, atCharacterIndex: 4, effectiveRange: nil) != nil)
+        #expect(layoutManager.temporaryAttribute(.backgroundColor, atCharacterIndex: 2, effectiveRange: nil) == nil)
+        // Highlights are not part of the text, so they never reach the file.
+        #expect(view.textStorage?.attribute(.backgroundColor, at: 0, effectiveRange: nil) == nil)
+    }
+
+    @Test func editClearsHighlights() {
+        let view = makeView("甲乙丙丁")
+        view.highlightRanges([NSRange(location: 0, length: 2)])
+        view.setSelectedRange(NSRange(location: 4, length: 0))
+        view.insertText("戊", replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(view.layoutManager!.temporaryAttribute(.backgroundColor, atCharacterIndex: 0, effectiveRange: nil) == nil)
+        #expect(view.highlightedRanges.isEmpty)
+    }
+
+    @Test func highlightMatchesFindsEveryOccurrenceIgnoringCase() {
+        let view = makeView("Swift 和 swift 与 SWIFT，还有 设计")
+        let count = view.highlightMatches(of: ["swift", "设计"])
+        #expect(count == 4)
+        #expect(view.highlightedRanges.count == 4)
+    }
+
+    @Test func highlightMatchesScrollsToTheFirstMatch() {
+        let filler = String(repeating: "填充文字，用来撑高文档。\n\n", count: 60)
+        let view = makeView(filler + "目标词在这里")
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
+        scrollView.documentView = view
+        view.setFrameSize(NSSize(width: 600, height: 4000))
+        _ = view.highlightMatches(of: ["目标词"])
+        #expect(view.highlightedRanges.count == 1)
+        #expect(scrollView.contentView.bounds.minY > 0)
+    }
+
+    @Test func emptyTermsHighlightNothing() {
+        let view = makeView("内容")
+        #expect(view.highlightMatches(of: []) == 0)
+        #expect(view.highlightMatches(of: [""]) == 0)
+    }
+
     @Test func headingGetsHeadingFont() {
         let view = makeView("# 标题\n\n正文")
         let heading = view.textStorage?.attribute(.font, at: 3, effectiveRange: nil) as? NSFont

@@ -1,5 +1,6 @@
 import AppKit
 import EditorKit
+import IndexKit
 import Observation
 import SwiftUI
 import VaultKit
@@ -19,6 +20,19 @@ final class AppModel {
     var columnVisibility: NavigationSplitViewVisibility = .all
     var errorMessage: String?
     var isQuickOpenPresented = false
+
+    // MARK: Index, tags and search state
+    private(set) var tagCounts: [TagCount] = []
+    var expandedTags: Set<String> = []
+    /// The tag whose notes the sidebar is listing, if any.
+    private(set) var selectedTag: String?
+    private(set) var tagNotes: [NoteRef] = []
+    var searchText = "" {
+        didSet { if searchText != oldValue { scheduleSearch() } }
+    }
+    private(set) var searchResults: [SearchHit] = []
+    /// Bumped by ⌘⇧F; the search field focuses itself when it changes.
+    private(set) var searchFocusToken = 0
     /// Most recently opened notes, newest first (at most 10); quick open lists them for an empty query.
     private(set) var recentPaths: [String] = []
 
@@ -35,6 +49,9 @@ final class AppModel {
     @ObservationIgnored private var sessionUse: [String] = []
     /// The deleted note shown with its "已被删除" banner; its tab goes away when the user leaves it.
     @ObservationIgnored private var deletedCurrent: String?
+    @ObservationIgnored private var index: NoteIndex?
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingHighlight: (path: String, terms: [String])?
     @ObservationIgnored private let persistDebouncer = Debouncer(delay: .milliseconds(500))
 
     private static let recentKey = "recentVaults"
@@ -71,6 +88,7 @@ final class AppModel {
         rememberRecent(url)
         restoreWorkspace(for: url)
         refreshTree()
+        startIndex(for: url)
         let watcher = VaultWatcher(root: url, registry: registry) { [weak self] changes in
             Task { @MainActor in self?.apply(changes) }
         }
@@ -118,6 +136,7 @@ final class AppModel {
 
     private func apply(_ changes: [VaultChange]) {
         refreshTree()
+        updateIndex(with: changes)
         for change in changes {
             for session in sessions.values { session.handle(change) }
             switch change {
@@ -136,6 +155,94 @@ final class AppModel {
             }
         }
         sessionsDidChange()
+    }
+
+    // MARK: Index and search
+
+    private func startIndex(for root: URL) {
+        index = nil
+        tagCounts = []
+        selectedTag = nil
+        searchText = ""
+        let database = VaultIdentity.supportDirectory(for: root).appendingPathComponent("index.sqlite")
+        guard let index = try? NoteIndex(databaseURL: database, vaultRoot: root) else { return }
+        self.index = index
+        // Indexing is low priority and never blocks the window (spec §3).
+        Task(priority: .utility) { [weak self] in
+            try? await index.sync()
+            await self?.refreshIndexViews()
+        }
+    }
+
+    private func updateIndex(with changes: [VaultChange]) {
+        guard let index else { return }
+        Task(priority: .utility) { [weak self] in
+            try? await index.apply(changes)
+            await self?.refreshIndexViews()
+        }
+    }
+
+    /// Reloads everything the sidebar shows from the index: tags, the open tag list and search results.
+    private func refreshIndexViews() async {
+        guard let index else { return }
+        tagCounts = (try? await index.tags()) ?? []
+        if let tag = selectedTag { await loadTagNotes(tag) }
+        if !searchText.isEmpty { searchResults = (try? await index.search(searchText)) ?? [] }
+    }
+
+    func focusSearch() {
+        columnVisibility = .all
+        searchFocusToken += 1
+    }
+
+    func clearSearch() {
+        searchText = ""
+    }
+
+    private func scheduleSearch() {
+        searchTask?.cancel()
+        let query = searchText
+        guard !query.trimmingCharacters(in: .whitespaces).isEmpty, let index else {
+            searchResults = []
+            return
+        }
+        // 120 ms debounce while typing (spec §10.4).
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            let hits = (try? await index.search(query)) ?? []
+            guard !Task.isCancelled else { return }
+            self?.searchResults = hits
+        }
+    }
+
+    func selectTag(_ tag: String?) {
+        selectedTag = tag
+        tagNotes = []
+        guard let tag else { return }
+        Task { await loadTagNotes(tag) }
+    }
+
+    private func loadTagNotes(_ tag: String) async {
+        guard let index else { return }
+        let paths = (try? await index.notes(taggedWith: tag)) ?? []
+        tagNotes = paths.map { NoteRef(path: $0, title: (($0 as NSString).lastPathComponent as NSString).deletingPathExtension) }
+    }
+
+    /// Opens a search hit, then marks every match in the editor and scrolls to the first (spec §10.4).
+    func openSearchResult(_ hit: SearchHit) {
+        let terms = searchText.split(whereSeparator: \.isWhitespace).map(String.init).filter { !$0.hasPrefix("#") }
+        pendingHighlight = (hit.path, terms)
+        open(path: hit.path)
+        applyPendingHighlight(to: activeTextView)
+    }
+
+    /// Called whenever an editor view appears; highlights only if it shows the note the search opened.
+    func applyPendingHighlight(to textView: MarkdownTextView?) {
+        guard let pending = pendingHighlight, let textView, let session = currentSession,
+              session.path == pending.path, textView.string == session.text else { return }
+        pendingHighlight = nil
+        textView.highlightMatches(of: pending.terms)
     }
 
     private func isCurrent(_ path: String) -> Bool {

@@ -29,8 +29,21 @@ struct SidebarView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            SidebarSearchField(model: model)
+            if !model.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                SearchResultsList(model: model)
+            } else if let tag = model.selectedTag {
+                TagNotesList(model: model, tag: tag)
+            } else {
+                sectionsList
+            }
+        }
+    }
+
+    private var sectionsList: some View {
         let titles = model.workspace.displayTitles()
-        List(selection: $model.selection) {
+        return List(selection: $model.selection) {
             SidebarSection(title: "置顶", model: model) {
                 if model.workspace.pinned.isEmpty {
                     Text("拖入笔记以置顶")
@@ -66,11 +79,7 @@ struct SidebarView: View {
                 }
             }
             SidebarSection(title: "标签", model: model) {
-                Text("暂无标签")
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
-                    .frame(height: 28)
-                    .selectionDisabled()
+                TagsSection(model: model)
             }
         }
         .listStyle(.sidebar)

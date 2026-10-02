@@ -45,6 +45,9 @@ public final class MarkdownTextView: NSTextView {
         didSet { publishBlockLabels() }
     }
 
+    /// Ranges currently marked as search matches; cleared by the next edit.
+    public private(set) var highlightedRanges: [NSRange] = []
+
     private let concealingLayoutManager: ConcealingLayoutManager
     private let concealAll: Bool
     private let labelOverlay = BlockLabelOverlay()
@@ -431,6 +434,48 @@ public final class MarkdownTextView: NSTextView {
         labelOverlay.needsDisplay = true
     }
 
+    // MARK: Search highlights
+
+    /// Marks ranges as search matches with temporary attributes, so nothing is written into the text or file.
+    public func highlightRanges(_ ranges: [NSRange]) {
+        clearHighlights()
+        let length = (string as NSString).length
+        highlightedRanges = ranges.filter { $0.length > 0 && NSMaxRange($0) <= length }
+        for range in highlightedRanges {
+            concealingLayoutManager.addTemporaryAttribute(.backgroundColor, value: NSColor.findHighlightColor, forCharacterRange: range)
+        }
+    }
+
+    /// Highlights every occurrence of `terms` (case-insensitive), scrolls the first into view and returns how
+    /// many were found.
+    @discardableResult
+    public func highlightMatches(of terms: [String]) -> Int {
+        let text = string as NSString
+        var ranges: [NSRange] = []
+        for term in terms where !term.isEmpty {
+            var searchRange = NSRange(location: 0, length: text.length)
+            while searchRange.length > 0 {
+                let found = text.range(of: term, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange)
+                guard found.location != NSNotFound else { break }
+                ranges.append(found)
+                searchRange = NSRange(location: NSMaxRange(found), length: text.length - NSMaxRange(found))
+            }
+        }
+        ranges.sort { $0.location < $1.location }
+        highlightRanges(ranges)
+        if let first = highlightedRanges.first { scrollRangeToVisible(first) }
+        return highlightedRanges.count
+    }
+
+    private func clearHighlights() {
+        guard !highlightedRanges.isEmpty else { return }
+        let length = (string as NSString).length
+        for range in highlightedRanges where NSMaxRange(range) <= length {
+            concealingLayoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
+        }
+        highlightedRanges = []
+    }
+
     // MARK: Layout
 
     /// Sizes the text column to the window (see `EditorTheme.horizontalInset`), 56 pt above the first line.
@@ -461,7 +506,10 @@ public final class MarkdownTextView: NSTextView {
 
     public override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
         let allowed = super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
-        if allowed { blocksAreStale = true }
+        if allowed {
+            blocksAreStale = true
+            clearHighlights()  // before the text moves under the stored ranges
+        }
         return allowed
     }
 

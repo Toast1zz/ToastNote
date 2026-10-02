@@ -103,7 +103,10 @@ struct MainWindow: View {
                         }
                     })
                 }
-                LiveEditorView(session: session, theme: .default) { model.activeTextView = $0 }
+                LiveEditorView(session: session, theme: .default) {
+                    model.activeTextView = $0
+                    model.applyPendingHighlight(to: $0)
+                }
             }
             .id(ObjectIdentifier(session))
             .navigationTitle(((session.path as NSString).lastPathComponent as NSString).deletingPathExtension)
