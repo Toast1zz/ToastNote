@@ -10,16 +10,12 @@ struct MainWindow: View {
                 WelcomeView(model: model)
             } else {
                 NavigationSplitView(columnVisibility: $model.columnVisibility) {
-                    // The footer sits below the list (not over it) so scrolled rows never show through.
-                    VStack(spacing: 0) {
-                        FolderTreeView(model: model)
-                        Divider()
-                        sidebarFooter
-                    }
-                    .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 320)
+                    FolderTreeView(model: model)
+                        .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 320)
                 } detail: {
                     detail
                 }
+                .toolbar { toolbarContent }
             }
         }
         .frame(minWidth: 640, minHeight: 420)
@@ -33,29 +29,28 @@ struct MainWindow: View {
         }
     }
 
-    private var sidebarFooter: some View {
-        HStack(spacing: 8) {
+    /// Frequent actions live in the window toolbar, like Apple Notes' compose button (HIG: toolbars).
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
             Button { model.newNote() } label: {
-                Label("新建笔记", systemImage: "plus")
+                Label("新建笔记", systemImage: "square.and.pencil")
             }
-            .buttonStyle(.plain)
-            Spacer()
+            .help("新建笔记（⌘N）")
+            .accessibilityLabel("新建笔记")
+        }
+        ToolbarItem(placement: .primaryAction) {
             Menu {
                 Button("新建文件夹") { model.newFolder() }
                 Divider()
                 Button("打开笔记库…") { model.chooseVault() }
                 Button("新建笔记库…") { model.createVault() }
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Label("更多", systemImage: "ellipsis.circle")
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
             .help("更多")
             .accessibilityLabel("更多")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     @ViewBuilder
