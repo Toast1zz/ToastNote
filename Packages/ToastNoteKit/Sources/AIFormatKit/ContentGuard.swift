@@ -88,6 +88,11 @@ public enum ContentGuard {
         return GuardResult(passed: false, changedSentences: sentences)
     }
 
+    /// The comparison form of a text: no whitespace, no punctuation, lowercase.
+    static func normalizedText(_ plain: String) -> String {
+        String(normalize(plain).characters)
+    }
+
     /// Drops whitespace and Unicode punctuation, lowercases, and remembers where each character came from.
     private static func normalize(_ plain: String) -> Normalized {
         var result = Normalized(plain: plain)
