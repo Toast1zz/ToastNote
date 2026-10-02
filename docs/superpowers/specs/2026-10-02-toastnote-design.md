@@ -338,8 +338,6 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);  -- schema_version 等
 | Anthropic | Anthropic | `https://api.anthropic.com` | `claude-haiku-4-5` |
 | OpenAI | OpenAI 兼容 | `https://api.openai.com/v1` | 留空，由用户填写 |
 | **DeepSeek（默认）** | OpenAI 兼容 | `https://api.deepseek.com` | `deepseek-flash`（即 DeepSeek V4.1 Flash） |
-| 硅基流动 | OpenAI 兼容 | `https://api.siliconflow.cn/v1` | 留空，由用户填写 |
-| 阿里云百炼 | OpenAI 兼容 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 留空，由用户填写 |
 | OpenRouter | OpenAI 兼容 | `https://openrouter.ai/api/v1` | 留空，由用户填写 |
 | Ollama（本地） | OpenAI 兼容 | `http://localhost:11434/v1` | 留空，不需要 Key |
 

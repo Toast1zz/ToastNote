@@ -26,6 +26,7 @@ public final class ProviderStore {
         self.defaults = defaults
         var stored = defaults.data(forKey: Self.providersKey)
             .flatMap { try? JSONDecoder().decode([ProviderConfig].self, from: $0) } ?? []
+        stored.removeAll { ProviderPresets.retiredIDs.contains($0.id) }
         // Presets added in later versions must show up for existing users; edited ones keep the user's values.
         for preset in ProviderPresets.all where !stored.contains(where: { $0.id == preset.id }) {
             stored.append(preset)

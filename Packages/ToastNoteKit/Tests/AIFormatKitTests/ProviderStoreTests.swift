@@ -9,7 +9,7 @@ private func isolatedDefaults() -> UserDefaults {
 @Suite struct ProviderStoreTests {
     @Test func presetsMatchSpec() throws {
         let presets = ProviderPresets.all
-        #expect(presets.map(\.id) == ["deepseek", "anthropic", "openai", "siliconflow", "dashscope", "openrouter", "ollama"])
+        #expect(presets.map(\.id) == ["deepseek", "anthropic", "openai", "openrouter", "ollama"])
         let deepseek = try #require(presets.first(where: { $0.id == "deepseek" }))
         #expect(deepseek.baseURL == "https://api.deepseek.com")
         #expect(deepseek.model == "deepseek-flash")
@@ -27,10 +27,23 @@ private func isolatedDefaults() -> UserDefaults {
     }
 
     @Test func otherPresetsLeaveTheModelForTheUser() throws {
-        for id in ["openai", "siliconflow", "dashscope", "openrouter", "ollama"] {
+        for id in ["openai", "openrouter", "ollama"] {
             let preset = ProviderPresets.all.first(where: { $0.id == id })
             #expect(preset?.model == "")
         }
+    }
+
+    @Test func retiredPresetsAreDroppedFromStoredProviders() throws {
+        let defaults = isolatedDefaults()
+        let retired = [
+            ProviderConfig(id: "siliconflow", name: "硅基流动", kind: .openAICompatible, baseURL: "https://api.siliconflow.cn/v1", model: "", requiresKey: true),
+            ProviderConfig(id: "dashscope", name: "阿里云百炼", kind: .openAICompatible, baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "", requiresKey: true),
+        ]
+        defaults.set(try JSONEncoder().encode(ProviderPresets.all + retired), forKey: "aiProviders")
+        defaults.set("dashscope", forKey: "aiCurrentProvider")
+        let store = ProviderStore(defaults: defaults)
+        #expect(store.providers.map(\.id) == ProviderPresets.all.map(\.id))
+        #expect(store.currentID == "deepseek")
     }
 
     @Test func defaultCurrentIsDeepSeek() {
