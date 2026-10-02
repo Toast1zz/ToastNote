@@ -35,6 +35,8 @@ public final class MarkdownTextView: NSTextView {
     }
     /// Decorations to draw (Task 13).
     private(set) var decorations: [Decoration] = []
+    /// Column widths of each rendered table, keyed by the table's first character.
+    private(set) var tableColumnWidths: [Int: [CGFloat]] = [:]
 
     /// Replaces the adaptive side inset, e.g. for the narrow panes of the review window.
     public var fixedHorizontalInset: CGFloat? {
@@ -111,6 +113,9 @@ public final class MarkdownTextView: NSTextView {
             string = newValue
             undoManager?.enableUndoRegistration()
             undoManager?.removeAllActions()
+            // A read-only pane is read from the top; with the insertion point at the end, NSTextView would
+            // scroll there whenever the view resizes.
+            if concealAll { setSelectedRange(NSRange(location: 0, length: 0)) }
             restyleAll()
         }
     }
@@ -208,9 +213,17 @@ public final class MarkdownTextView: NSTextView {
         }
         reserveSpaceForImages(result.decorations, in: range, storage: storage)
         if range.length == (string as NSString).length { imageLayoutWidth = result.decorations.contains(where: Self.isImage) ? textWidth : nil }
-        concealingLayoutManager.hidden = result.hidden.reduce(into: IndexSet()) { set, hidden in
+        let hidden = result.hidden.reduce(into: IndexSet()) { set, hidden in
             if hidden.length > 0 { set.insert(integersIn: hidden.location..<NSMaxRange(hidden)) }
         }
+        // Tables shifted by an edit elsewhere keep their kerning but are measured again under their new key.
+        tableColumnWidths = tableColumnWidths.filter { location, _ in
+            result.decorations.contains { if case .table(let layout) = $0 { layout.range.location == location } else { false } }
+        }
+        if range.length > 0 { slantItalicCJK(in: range, storage: storage) }
+        alignTableColumns(result.decorations, in: range, hidden: hidden, storage: storage)
+        concealingLayoutManager.tableColumnWidths = tableColumnWidths
+        concealingLayoutManager.hidden = hidden
         storage.endEditing()
         if range.length > 0 {
             concealingLayoutManager.invalidateGlyphs(forCharacterRange: range, changeInLength: 0, actualCharacterRange: nil)
@@ -442,6 +455,65 @@ public final class MarkdownTextView: NSTextView {
         }
         needsDisplay = true
         labelOverlay.needsDisplay = true
+    }
+
+    // MARK: Italic and tables
+
+    /// CJK fonts have no italic face, so italic CJK characters are slanted synthetically; Latin text keeps the
+    /// real italic face (slanting it as well would double the angle).
+    private func slantItalicCJK(in range: NSRange, storage: NSTextStorage) {
+        let text = string as NSString
+        storage.enumerateAttribute(.font, in: range) { value, run, _ in
+            guard let font = value as? NSFont, font.fontDescriptor.symbolicTraits.contains(.italic) else { return }
+            var start: Int?
+            for index in run.location...NSMaxRange(run) {
+                let isCJK = index < NSMaxRange(run) && Self.isCJK(text.character(at: index))
+                if isCJK, start == nil { start = index }
+                if !isCJK, let first = start {
+                    storage.addAttribute(.obliqueness, value: 0.2, range: NSRange(location: first, length: index - first))
+                    start = nil
+                }
+            }
+        }
+    }
+
+    private static func isCJK(_ unit: unichar) -> Bool {
+        switch unit {
+        case 0x2E80...0x9FFF, 0xAC00...0xD7AF, 0xF900...0xFAFF, 0xFE30...0xFE4F, 0xFF00...0xFFEF: true
+        default: false
+        }
+    }
+
+    /// Space between columns: the cell padding on both sides of a column rule.
+    private var tableGap: CGFloat { 2 * theme.codePadding }
+
+    /// Widens each inner pipe (an invisible spacer) with kerning so every cell starts on its column.
+    private func alignTableColumns(_ decorations: [Decoration], in range: NSRange, hidden: IndexSet, storage: NSTextStorage) {
+        for case .table(let layout) in decorations
+        where NSIntersectionRange(layout.range, range).length > 0 || tableColumnWidths[layout.range.location] == nil {
+            let widths = layout.rows.map { row in row.cells.map { visibleWidth(of: $0, hidden: hidden, storage: storage) } }
+            let columnCount = widths.map(\.count).max() ?? 0
+            let columns = (0..<columnCount).map { column in widths.compactMap { $0.indices.contains(column) ? $0[column] : nil }.max() ?? 0 }
+            tableColumnWidths[layout.range.location] = columns
+            for (rowIndex, row) in layout.rows.enumerated() {
+                for (column, spacer) in row.spacers.enumerated() where columns.indices.contains(column) {
+                    let spacerRange = NSRange(location: spacer, length: 1)
+                    let spacerWidth = storage.attributedSubstring(from: spacerRange).size().width
+                    let cellWidth = widths[rowIndex].indices.contains(column) ? widths[rowIndex][column] : 0
+                    storage.addAttribute(.kern, value: columns[column] + tableGap - cellWidth - spacerWidth, range: spacerRange)
+                }
+            }
+        }
+    }
+
+    /// Width of the characters of `range` that are not hidden, as laid out with their current attributes.
+    private func visibleWidth(of range: NSRange, hidden: IndexSet, storage: NSTextStorage) -> CGFloat {
+        guard range.length > 0 else { return 0 }
+        let visible = NSMutableAttributedString()
+        for index in range.location..<NSMaxRange(range) where !hidden.contains(index) {
+            visible.append(storage.attributedSubstring(from: NSRange(location: index, length: 1)))
+        }
+        return ceil(visible.size().width)
     }
 
     // MARK: Images (spec §10.5)

@@ -73,4 +73,39 @@ import Testing
         #expect(color(.tag) == .controlAccentColor)
         #expect(color(.marker) == .secondaryLabelColor)
     }
+
+    @Test func italicUsesTheItalicFaceWithoutExtraSlant() {
+        // Latin text gets the real italic face; CJK, which has none, is slanted by the view per character.
+        let attributes = theme.attributes(for: TextStyle(role: .body, italic: true))
+        #expect(attributes[.obliqueness] == nil)
+        let traits = (attributes[.font] as? NSFont)?.fontDescriptor.symbolicTraits
+        #expect(traits?.contains(.italic) == true)
+    }
+
+    @Test func tagsAndLinksAreNeverStruckThrough() {
+        #expect(theme.attributes(for: TextStyle(role: .tag))[.strikethroughStyle] as? Int == 0)
+    }
+
+    @Test func headingAfterABoxGetsTheBoxAirToo() {
+        let plain = theme.paragraphStyle(for: TextStyle(role: .body, blankLine: .beforeHeading(2))).maximumLineHeight
+        let afterBox = theme.paragraphStyle(for: TextStyle(role: .body, blankLine: .beforeHeading(2, afterBox: true))).maximumLineHeight
+        #expect(afterBox == plain + 0.6 * 15)
+    }
+
+    @Test func tableRowsArePaddedAndEvenlySpaced() {
+        let row = theme.paragraphStyle(for: TextStyle(role: .body, tableRow: true))
+        #expect(row.minimumLineHeight == CGFloat(30))
+        #expect(row.paragraphSpacing == 0)
+        #expect(row.headIndent == 12 && row.firstLineHeadIndent == 12)
+    }
+
+    @Test func standInLinesForRulesAndFrontmatter() {
+        let rule = theme.paragraphStyle(for: TextStyle(role: .rulePlaceholder))
+        #expect(rule.minimumLineHeight == 1.5 * 15)
+        let front = theme.paragraphStyle(for: TextStyle(role: .frontmatterPlaceholder))
+        #expect(front.minimumLineHeight == 1.75 * 15)
+        #expect(front.paragraphSpacing == 1.2 * 15)
+        #expect(theme.paragraphStyle(for: TextStyle(role: .body, blankLine: .besideBox)).maximumLineHeight == 1.3 * 15)
+        #expect(theme.attributes(for: TextStyle(role: .rulePlaceholder))[.foregroundColor] as? NSColor == .clear)
+    }
 }

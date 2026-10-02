@@ -50,16 +50,18 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
               hidden: [r(0, 2)], runs: [(r(2, 1), .body)]),
         .init(name: "bullet active", text: "- 项", caret: 2,
               hidden: [], runs: [(r(0, 2), .marker)]),
-        .init(name: "ordered keeps number", text: "1. 项", caret: nil,
-              hidden: [], runs: [(r(0, 3), .marker), (r(3, 1), .body)]),
+        .init(name: "ordered inactive draws its number in the gutter", text: "1. 项", caret: nil,
+              hidden: [r(0, 3)], runs: [(r(3, 1), .body)]),
+        .init(name: "ordered active", text: "1. 项", caret: 3,
+              hidden: [], runs: [(r(0, 3), .marker)]),
         .init(name: "quote inactive", text: "> 引用", caret: nil,
               hidden: [r(0, 2)], runs: [(r(2, 2), .quote)]),
         .init(name: "fence inactive", text: "```swift\nlet x\n```", caret: nil,
               hidden: [r(0, 9), r(14, 4)], runs: [(r(9, 5), .codeBlock)]),
         .init(name: "fence active", text: "```swift\nlet x\n```", caret: 10,
               hidden: [], runs: [(r(0, 8), .marker), (r(15, 3), .marker), (r(9, 5), .codeBlock)]),
-        .init(name: "rule inactive", text: "a\n\n---", caret: 0,
-              hidden: [r(3, 3)], runs: []),
+        .init(name: "rule inactive keeps one stand-in character", text: "a\n\n---", caret: 0,
+              hidden: [r(4, 2)], runs: [(r(3, 1), .rulePlaceholder)]),
         .init(name: "tag", text: "看 #工作", caret: nil,
               hidden: [], runs: [(r(2, 3), .tag)]),
     ]
@@ -121,7 +123,13 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
         let heading = style("a\n\n## b").runs.first { $0.style.blankLine != nil }
         #expect(heading?.style.blankLine == .beforeHeading(2))
         let code = style("a\n\n```\nx\n```").runs.first { $0.style.blankLine != nil }
-        #expect(code?.style.blankLine == .beforeCode)
+        #expect(code?.style.blankLine == .besideBox)
+        let afterCode = style("```\nx\n```\n\nb").runs.first { $0.style.blankLine != nil }
+        #expect(afterCode?.style.blankLine == .besideBox)
+        let beforeTable = style("a\n\n| a |\n|---|").runs.first { $0.style.blankLine != nil }
+        #expect(beforeTable?.style.blankLine == .besideBox)
+        let headingAfterCode = style("```\nx\n```\n\n## h").runs.first { $0.style.blankLine != nil }
+        #expect(headingAfterCode?.style.blankLine == .beforeHeading(2, afterBox: true))
         let plain = style("a\n\nb").runs.first { $0.style.blankLine != nil }
         #expect(plain?.style.blankLine == .plain)
     }
@@ -154,9 +162,18 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
         #expect(active.runs.contains { $0.range == r(4, 5) && $0.style.listDepth == 0 })
     }
 
-    @Test func bulletItemsReserveAGutterButOrderedItemsDoNot() {
-        #expect(style("- 项").runs.contains { $0.range == r(0, 3) && $0.style.listDepth != nil })
-        #expect(!style("1. 项").runs.contains { $0.style.listDepth != nil })
+    @Test func listItemsReserveAGutter() {
+        #expect(style("- 项").runs.contains { $0.range == r(0, 3) && $0.style.listDepth == 0 })
+        #expect(style("1. 项").runs.contains { $0.range == r(0, 4) && $0.style.listDepth == 0 })
+    }
+
+    @Test func orderedNumberDecorationAndNesting() {
+        #expect(style("1. 项").decorations.contains(.orderedNumber("1.", at: 0, depth: 0)))
+        #expect(!style("1. 项", caret: 3).decorations.contains { if case .orderedNumber = $0 { true } else { false } })
+        let nested = style("1. a\n   1) b")
+        #expect(nested.hidden.contains(r(5, 3)))  // source indentation
+        #expect(nested.decorations.contains(.orderedNumber("1)", at: 8, depth: 1)))
+        #expect(nested.runs.contains { $0.range == r(5, 7) && $0.style.listDepth == 1 })
     }
 
     @Test func bulletDecoration() {
@@ -191,8 +208,33 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
         #expect(result.decorations.contains(.image(source: "a.png", lineRange: r(0, 11))))
     }
 
-    @Test func tableIsMonospaceWithMutedPipes() {
+    @Test func inactiveTableBecomesAGrid() {
         let result = style("| a | b |\n|---|---|\n| 1 | 2 |")
+        // Outer pipes, cell padding and the delimiter row (with its line break) are hidden; inner pipes stay as
+        // invisible spacers that the view widens to the column width.
+        #expect(result.hidden.sorted { $0.location < $1.location } == [
+            r(0, 2), r(3, 1), r(5, 1), r(7, 2), r(10, 10), r(20, 2), r(23, 1), r(25, 1), r(27, 2),
+        ])
+        let layout = TableLayout(range: r(0, 29), rows: [
+            TableRow(line: r(0, 9), cells: [r(2, 1), r(6, 1)], spacers: [4], isHeader: true),
+            TableRow(line: r(20, 9), cells: [r(22, 1), r(26, 1)], spacers: [24], isHeader: false),
+        ])
+        #expect(result.decorations.contains(.table(layout)))
+        #expect(result.runs.contains { $0.range == r(2, 1) && $0.style.bold })
+        #expect(result.runs.contains { $0.range == r(26, 1) && !$0.style.bold && $0.style.role == .body })
+        #expect(result.runs.contains { $0.range == r(4, 1) && $0.style.role == .tableSpacer })
+        #expect(result.runs.contains { $0.range == r(0, 29) && $0.style.tableRow })
+    }
+
+    @Test func tableRowsWithoutOuterPipesAndEscapedPipes() {
+        let result = style("a | b\\|c\n--|--")
+        let table = result.decorations.compactMap { if case .table(let layout) = $0 { layout } else { nil } }.first
+        #expect(table?.rows.first?.cells == [r(0, 1), r(4, 4)])
+        #expect(table?.rows.first?.spacers == [2])
+    }
+
+    @Test func activeTableIsMonospaceWithMutedPipes() {
+        let result = style("| a | b |\n|---|---|\n| 1 | 2 |", caret: 1)
         #expect(result.hidden.isEmpty)
         #expect(result.runs.contains { $0.style.role == .codeInline && $0.range == r(0, 29) })
         #expect(result.runs.contains { $0.style.role == .marker && $0.range == r(0, 1) })
@@ -201,7 +243,8 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
 
     @Test func frontmatterInactiveCollapsesToSummary() {
         let result = style("---\ntags: [a]\ntitle: x\n---\n正文", caret: 27)
-        #expect(result.hidden == [r(0, 26)])
+        #expect(result.hidden == [r(1, 25)])  // the first "-" stays as the summary line's stand-in
+        #expect(result.runs.contains { $0.range == r(0, 1) && $0.style.role == .frontmatterPlaceholder })
         #expect(result.decorations.contains(.frontmatterSummary(count: 2, lineRange: r(0, 3))))
     }
 

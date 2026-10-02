@@ -12,6 +12,8 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     var imageProvider: (@MainActor (String) -> (image: NSImage, size: NSSize)?)?
     /// Labelled blocks of the review window: a 2 pt accent bar in the gutter plus a small label.
     var blockLabels: [(range: NSRange, label: String)] = []
+    /// Column widths of rendered tables, keyed by the table's first character; measured by the text view.
+    var tableColumnWidths: [Int: [CGFloat]] = [:]
 
     override init() {
         super.init()
@@ -92,6 +94,16 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         )
     }
 
+    /// Start of the visible text after the hidden marker at `characterIndex`: its x and baseline.
+    private func textStart(afterMarkerAt characterIndex: Int) -> NSPoint {
+        let markerEnd = hidden.rangeView.first { $0.contains(characterIndex) }?.upperBound ?? characterIndex + 1
+        guard numberOfGlyphs > 0 else { return .zero }
+        let glyph = min(glyphIndexForCharacter(at: markerEnd), numberOfGlyphs - 1)
+        let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let position = location(forGlyphAt: glyph)
+        return NSPoint(x: fragment.minX + position.x, y: fragment.minY + position.y)
+    }
+
     /// Light wash of the label color; adapts to dark mode (spec §9.4 calls for the quaternary label at 50%,
     /// which `withAlphaComponent` would turn into an opaque-looking gray).
     static var codeWash: NSColor { NSColor.labelColor.withAlphaComponent(0.07) }
@@ -118,8 +130,14 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         return NSRect(x: rect.minX, y: top, width: rect.width, height: bottom - top)
     }
 
-    /// Full-width box for a code block with equal padding above the first and below the last line of text.
-    private func codeBackgroundRect(for range: NSRange, width: CGFloat) -> NSRect? {
+    /// Left edge of the text column inside the container; boxes, rules and pictures line up with it.
+    private var columnLeft: CGFloat { textContainers.first?.lineFragmentPadding ?? 0 }
+
+    /// Width of the text column.
+    private var columnWidth: CGFloat { max((textContainers.first?.size.width ?? 0) - 2 * columnLeft, 0) }
+
+    /// Column-wide box for a code block with equal padding above the first and below the last line of text.
+    private func codeBackgroundRect(for range: NSRange) -> NSRect? {
         guard numberOfGlyphs > 0, range.length > 0 else { return nil }
         let codeSize = 13 * theme.bodySize / 15
         let padding: CGFloat = 8
@@ -130,7 +148,7 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         while last > first, hidden.contains(last) { last -= 1 }
         let top = baseline(ofCharacterAt: first) - 1.0 * codeSize - padding
         let bottom = baseline(ofCharacterAt: last) + 0.3 * codeSize + padding
-        return NSRect(x: 0, y: top, width: width, height: bottom - top)
+        return NSRect(x: columnLeft, y: top, width: columnWidth, height: bottom - top)
     }
 
     // MARK: Drawing
@@ -166,10 +184,10 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         for decoration in decorations {
             switch decoration {
             case .codeBackground(let range):
-                guard intersects(range, visible), let rect = codeBackgroundRect(for: range, width: container.size.width) else { continue }
+                guard intersects(range, visible), let rect = codeBackgroundRect(for: range) else { continue }
                 fill(rect, origin: origin, radius: 6, color: Self.codeWash)
             case .codeLanguage(let language, let range):
-                guard intersects(range, visible), let box = codeBackgroundRect(for: range, width: container.size.width) else { continue }
+                guard intersects(range, visible), let box = codeBackgroundRect(for: range) else { continue }
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.tertiaryLabelColor,
                 ]
@@ -194,28 +212,32 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 guard intersects(range, visible) else { continue }
                 let rects = lineRects(for: range)
                 guard let first = rects.first, let last = rects.last else { continue }
-                let bar = NSRect(x: 4, y: first.minY, width: 3, height: last.maxY - first.minY)
+                let bar = NSRect(x: columnLeft, y: first.minY, width: 3, height: last.maxY - first.minY)
                 fill(bar, origin: origin, radius: 1.5, color: accent.withAlphaComponent(0.4))
             case .rule(let range):
-                guard intersects(range, visible), let first = lineRects(for: range).first else { continue }
-                let line = NSRect(x: 0, y: first.midY - 0.5, width: container.size.width, height: 1)
+                guard intersects(range, visible), let first = lineRects(for: NSRange(location: range.location, length: 1)).first else { continue }
+                let line = NSRect(x: columnLeft, y: first.midY - 0.5, width: columnWidth, height: 1)
                 fill(line, origin: origin, radius: 0, color: NSColor.separatorColor)
-            case .bullet(let at, _):
+            case .bullet(let at, let depth):
                 guard NSLocationInRange(at, visible) else { continue }
-                drawBullet(markerAt: at, origin: origin)
+                drawBullet(markerAt: at, depth: depth, origin: origin)
+            case .orderedNumber(let number, let at, _):
+                guard NSLocationInRange(at, visible) else { continue }
+                drawNumber(number, markerAt: at, origin: origin)
+            case .table(let layout):
+                guard intersects(layout.range, visible) else { continue }
+                drawTable(layout, origin: origin, containerWidth: container.size.width)
             case .checkbox(let at, let done):
                 guard NSLocationInRange(at, visible) else { continue }
                 drawCheckbox(markerAt: at, done: done, origin: origin)
             case .frontmatterSummary(let count, let lineRange):
                 guard intersects(lineRange, visible), let first = lineRects(for: lineRange).first else { continue }
-                let text = "属性 · \(count) 项" as NSString
-                let attributes: [NSAttributedString.Key: Any] = theme.attributes(for: TextStyle(role: .frontmatterSummary))
-                text.draw(at: NSPoint(x: origin.x + first.minX, y: origin.y + first.minY), withAttributes: attributes)
+                drawFrontmatterSummary(count: count, line: first, origin: origin)
             case .image(let source, let lineRange):
                 guard intersects(lineRange, visible), let line = lineRects(for: lineRange).first, let provider = imageProvider,
                       let content = MainActor.assumeIsolated({ provider(source) }) else { continue }
                 // The line is as tall as the picture (plus a margin), so the picture fills its own line.
-                let rect = NSRect(x: 0, y: line.minY + 6, width: content.size.width, height: content.size.height)
+                let rect = NSRect(x: columnLeft, y: line.minY + 6, width: content.size.width, height: content.size.height)
                 let target = rect.offsetBy(dx: origin.x, dy: origin.y)
                 NSGraphicsContext.saveGraphicsState()
                 NSBezierPath(roundedRect: target, xRadius: 6, yRadius: 6).addClip()
@@ -249,13 +271,97 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         }
     }
 
-    private func drawBullet(markerAt index: Int, origin: NSPoint) {
+    private var markerColor: NSColor { theme.increasedContrast ? .labelColor : .secondaryLabelColor }
+
+    /// A filled dot, then a ring, then a small square for deeper levels, so nesting reads at a glance.
+    private func drawBullet(markerAt index: Int, depth: Int, origin: NSPoint) {
         let size = theme.bodySize
         let rect = gutterRect(forMarkerAt: index, size: size).offsetBy(dx: origin.x, dy: origin.y)
         let diameter = size * 0.3
-        (theme.increasedContrast ? NSColor.labelColor : NSColor.secondaryLabelColor).setFill()
-        // The dot sits in the right half of the gutter, next to the text.
-        NSBezierPath(ovalIn: NSRect(x: rect.maxX - diameter - 2, y: rect.midY - diameter / 2, width: diameter, height: diameter)).fill()
+        // The mark sits in the right half of the gutter, next to the text.
+        let mark = NSRect(x: rect.maxX - diameter - 2, y: rect.midY - diameter / 2, width: diameter, height: diameter)
+        markerColor.set()
+        switch depth % 3 {
+        case 0:
+            NSBezierPath(ovalIn: mark).fill()
+        case 1:
+            let ring = NSBezierPath(ovalIn: mark.insetBy(dx: 0.6, dy: 0.6))
+            ring.lineWidth = 1.2
+            ring.stroke()
+        default:
+            NSBezierPath(rect: mark.insetBy(dx: 0.4, dy: 0.4)).fill()
+        }
+    }
+
+    /// The item number, right-aligned in the gutter on the text's baseline, with tabular digits so a column of
+    /// numbers lines up.
+    private func drawNumber(_ number: String, markerAt index: Int, origin: NSPoint) {
+        let start = textStart(afterMarkerAt: index)
+        let font = NSFont.monospacedDigitSystemFont(ofSize: theme.bodySize, weight: .regular)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: markerColor]
+        let width = (number as NSString).size(withAttributes: attributes).width
+        let right = start.x - 0.35 * theme.bodySize
+        (number as NSString).draw(
+            at: NSPoint(x: origin.x + right - width, y: origin.y + start.y - font.ascender),
+            withAttributes: attributes
+        )
+    }
+
+    /// "属性 · n 项" as a quiet capsule on the frontmatter's own line.
+    private func drawFrontmatterSummary(count: Int, line: NSRect, origin: NSPoint) {
+        let text = "属性 · \(count) 项" as NSString
+        let font = NSFont.systemFont(ofSize: 12 * theme.bodySize / 15)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: markerColor]
+        let size = text.size(withAttributes: attributes)
+        let pill = NSRect(x: columnLeft, y: line.midY - size.height / 2 - 3, width: size.width + 16, height: size.height + 6)
+        fill(pill, origin: origin, radius: pill.height / 2, color: Self.codeWash)
+        text.draw(at: NSPoint(x: origin.x + pill.minX + 8, y: origin.y + pill.minY + 3), withAttributes: attributes)
+    }
+
+    /// A rounded box with a tinted header, rules between rows and columns. Rows are measured from their
+    /// baselines (line boxes carry their extra height above the text).
+    private func drawTable(_ layout: TableLayout, origin: NSPoint, containerWidth: CGFloat) {
+        guard let columns = tableColumnWidths[layout.range.location], !columns.isEmpty, !layout.rows.isEmpty, numberOfGlyphs > 0 else { return }
+        let size = theme.bodySize
+        let gap = 2 * theme.codePadding
+        let baselines = layout.rows.map { row -> CGFloat in
+            let anchor = row.cells.first { $0.length > 0 }?.location ?? row.spacers.first ?? row.line.location
+            return baseline(ofCharacterAt: anchor)
+        }
+        let lastRow = layout.rows[layout.rows.count - 1]
+        // A wrapped last row ends on its last line fragment.
+        let lastBaseline = lineRects(for: lastRow.line).count > 1 ? baseline(ofCharacterAt: NSMaxRange(lastRow.line) - 1) : baselines[baselines.count - 1]
+        let pad = 0.35 * size
+        let top = baselines[0] - 1.0 * size - pad
+        let bottom = lastBaseline + 0.3 * size + pad
+        let firstCell = layout.rows[0].cells.first { $0.length > 0 }?.location ?? layout.rows[0].line.location
+        let textX = textStart(afterMarkerAt: max(firstCell - 1, layout.range.location)).x
+        let left = max(textX - theme.codePadding, 0)
+        let contentWidth = columns.reduce(0, +) + gap * CGFloat(columns.count - 1)
+        let box = NSRect(x: left, y: top, width: min(contentWidth + 2 * theme.codePadding, containerWidth - left), height: bottom - top)
+        let moved = box.offsetBy(dx: origin.x, dy: origin.y)
+        let outline = NSBezierPath(roundedRect: moved.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+
+        NSGraphicsContext.saveGraphicsState()
+        outline.addClip()
+        if baselines.count > 1 {
+            let headerBottom = (baselines[0] + 0.3 * size + baselines[1] - 1.0 * size) / 2
+            fill(NSRect(x: box.minX, y: box.minY, width: box.width, height: headerBottom - box.minY), origin: origin, radius: 0, color: Self.codeWash)
+        }
+        let rule = NSColor.separatorColor
+        for index in 1..<max(baselines.count, 1) {
+            let y = (baselines[index - 1] + 0.3 * size + baselines[index] - 1.0 * size) / 2
+            fill(NSRect(x: box.minX, y: y - 0.5, width: box.width, height: 1), origin: origin, radius: 0, color: rule)
+        }
+        var x = textX
+        for width in columns.dropLast() {
+            x += width + gap
+            fill(NSRect(x: x - gap / 2 - 0.5, y: box.minY, width: 1, height: box.height), origin: origin, radius: 0, color: rule)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        rule.setStroke()
+        outline.lineWidth = 1
+        outline.stroke()
     }
 
     private func drawCheckbox(markerAt index: Int, done: Bool, origin: NSPoint) {

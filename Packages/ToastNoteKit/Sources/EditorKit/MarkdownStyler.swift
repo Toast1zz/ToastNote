@@ -1,7 +1,36 @@
 import Foundation
 
+/// One row of a rendered table: the visible cell contents and the inner pipes between them.
+public struct TableRow: Equatable, Sendable {
+    public var line: NSRange
+    public var cells: [NSRange]
+    /// Inner pipes kept as invisible spacers; the view widens each so the next cell starts on its column.
+    public var spacers: [Int]
+    public var isHeader: Bool
+
+    public init(line: NSRange, cells: [NSRange], spacers: [Int], isHeader: Bool) {
+        self.line = line
+        self.cells = cells
+        self.spacers = spacers
+        self.isHeader = isHeader
+    }
+}
+
+public struct TableLayout: Equatable, Sendable {
+    public var range: NSRange
+    public var rows: [TableRow]
+
+    public init(range: NSRange, rows: [TableRow]) {
+        self.range = range
+        self.rows = rows
+    }
+}
+
 public enum Decoration: Equatable, Sendable {
     case bullet(at: Int, depth: Int)
+    /// The number of an ordered item ("1." or "1)"), drawn right-aligned in the list gutter.
+    case orderedNumber(String, at: Int, depth: Int)
+    case table(TableLayout)
     case checkbox(at: Int, done: Bool)
     case quoteBar(NSRange)
     case codeBackground(NSRange)
@@ -57,12 +86,19 @@ public enum MarkdownStyler {
     /// Blank lines are real empty paragraphs; give them a short line so they do not double paragraph gaps.
     private static func emitBlankLines(blocks: [Block], text: NSString, into result: inout StyleResult) {
         var cursor = 0
+        var previous: Block?
+        func isBox(_ block: Block?) -> Bool {
+            switch block?.kind {
+            case .codeBlock?, .table?: true
+            default: false
+            }
+        }
         func scan(upTo end: Int, before next: Block?) {
             var kind = BlankLine.plain
-            switch next?.kind {
-            case .heading(let level)?: kind = .beforeHeading(level)
-            case .codeBlock?: kind = .beforeCode
-            default: break
+            if case .heading(let level)? = next?.kind {
+                kind = .beforeHeading(level, afterBox: isBox(previous))
+            } else if isBox(next) || isBox(previous) {
+                kind = .besideBox
             }
             var index = cursor
             while index < min(end, text.length) {
@@ -77,6 +113,7 @@ public enum MarkdownStyler {
             scan(upTo: block.range.location, before: block)
             // Skip the block's own line terminator.
             cursor = max(cursor, NSMaxRange(block.range) + 1)
+            previous = block
         }
         scan(upTo: text.length, before: nil)
     }
@@ -91,7 +128,9 @@ public enum MarkdownStyler {
             if isActive {
                 result.runs.append(StyleRun(range: block.range, style: TextStyle(role: .codeInline)))
             } else {
-                result.hidden.append(block.range)
+                // The first "-" stays as an invisible stand-in so the summary gets a line of its own.
+                result.hidden.append(NSRange(location: block.range.location + 1, length: block.range.length - 1))
+                result.runs.append(StyleRun(range: NSRange(location: block.range.location, length: 1), style: TextStyle(role: .frontmatterPlaceholder)))
                 var start = 0, end = 0, contentsEnd = 0
                 text.getLineStart(&start, end: &end, contentsEnd: &contentsEnd, for: NSRange(location: block.range.location, length: 0))
                 let lineEnd = NSRange(location: start, length: contentsEnd - start)
@@ -102,12 +141,18 @@ public enum MarkdownStyler {
             if isActive {
                 result.runs.append(StyleRun(range: block.range, style: TextStyle(role: .marker)))
             } else {
-                result.hidden.append(block.range)
+                // One stand-in character keeps the rule's line; fully hidden it would ride on the line above.
+                result.hidden.append(NSRange(location: block.range.location + 1, length: block.range.length - 1))
+                result.runs.append(StyleRun(range: NSRange(location: block.range.location, length: 1), style: TextStyle(role: .rulePlaceholder)))
                 result.decorations.append(.rule(block.range))
             }
             return
         case .table:
-            emitTable(block, text: text, into: &result)
+            if isActive {
+                emitTableSource(block, text: text, into: &result)
+            } else {
+                emitTableGrid(block, text: text, into: &result)
+            }
             return
         default:
             break
@@ -118,16 +163,14 @@ public enum MarkdownStyler {
         var listDepth: Int?
         var isListItem = false
         var runRange = block.range
-        if case .listItem(let ordered, _, let depth) = block.kind {
+        if case .listItem(_, _, let depth) = block.kind {
             isListItem = true
-            if !ordered {
-                // Inactive bullets are indented by paragraph style, so the source indentation is hidden. The
-                // indentation joins the block run so the paragraph style starts at the line's first character.
-                let lead = leadingWhitespace(before: block.range.location, in: text)
-                runRange = NSRange(location: lead.location, length: NSMaxRange(block.range) - lead.location)
-                listDepth = isActive ? 0 : depth
-                if !isActive, lead.length > 0 { result.hidden.append(lead) }
-            }
+            // Inactive items are indented by paragraph style, so the source indentation is hidden. The
+            // indentation joins the block run so the paragraph style starts at the line's first character.
+            let lead = leadingWhitespace(before: block.range.location, in: text)
+            runRange = NSRange(location: lead.location, length: NSMaxRange(block.range) - lead.location)
+            listDepth = isActive ? 0 : depth
+            if !isActive, lead.length > 0 { result.hidden.append(lead) }
         }
         let blockStyle = TextStyle(role: base, listDepth: listDepth, tightSpacing: isListItem)
         if runRange.length > 0 {
@@ -169,15 +212,16 @@ public enum MarkdownStyler {
 
     private static func emitBlockSyntax(_ block: Block, text: NSString, isActive: Bool, into result: inout StyleResult) {
         let marker = TextStyle(role: .marker)
-        var hideMarkers = !isActive
+        let hideMarkers = !isActive
         var decoration: Decoration?
-        if case .listItem(let ordered, let task, let depth) = block.kind, let syntax = block.syntaxRanges.first {
-            if ordered {
-                // Ordered numbers stay visible, muted.
-                hideMarkers = false
-                result.runs.append(StyleRun(range: syntax, style: marker))
-            } else if !isActive {
-                decoration = task.map { .checkbox(at: syntax.location, done: $0 == .done) } ?? .bullet(at: syntax.location, depth: depth)
+        if case .listItem(let ordered, let task, let depth) = block.kind, let syntax = block.syntaxRanges.first, !isActive {
+            if let task {
+                decoration = .checkbox(at: syntax.location, done: task == .done)
+            } else if ordered {
+                let number = text.substring(with: syntax).trimmingCharacters(in: .whitespaces)
+                decoration = .orderedNumber(number, at: syntax.location, depth: depth)
+            } else {
+                decoration = .bullet(at: syntax.location, depth: depth)
             }
         }
         for (index, syntax) in block.syntaxRanges.enumerated() where syntax.length > 0 {
@@ -287,7 +331,82 @@ public enum MarkdownStyler {
 
     // MARK: Tables, frontmatter
 
-    private static func emitTable(_ block: Block, text: NSString, into result: inout StyleResult) {
+    /// Inactive tables render as a grid: outer pipes, cell padding and the delimiter row are hidden, inner pipes
+    /// stay as spacers, the header row is bold, and the view lines the columns up and draws the rules.
+    private static func emitTableGrid(_ block: Block, text: NSString, into result: inout StyleResult) {
+        result.runs.append(StyleRun(range: block.range, style: TextStyle(role: .body, tableRow: true)))
+        var rows: [TableRow] = []
+        var location = block.range.location
+        var lineNumber = 0
+        while location < NSMaxRange(block.range) {
+            var start = 0, end = 0, contentsEnd = 0
+            text.getLineStart(&start, end: &end, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
+            let line = NSRange(location: start, length: min(contentsEnd, NSMaxRange(block.range)) - start)
+            if lineNumber == 1 {
+                // The delimiter row goes with its line break, like a code fence.
+                result.hidden.append(NSRange(location: line.location, length: min(end, NSMaxRange(block.range) + 1) - line.location))
+            } else {
+                let row = tableRow(line, text: text, isHeader: lineNumber == 0)
+                rows.append(row)
+                result.hidden.append(contentsOf: subtract(row.cells + row.spacers.map { NSRange(location: $0, length: 1) }, from: line))
+                for cell in row.cells where cell.length > 0 {
+                    result.runs.append(StyleRun(range: cell, style: TextStyle(role: .body, bold: row.isHeader, tableRow: true)))
+                }
+                for spacer in row.spacers {
+                    result.runs.append(StyleRun(range: NSRange(location: spacer, length: 1), style: TextStyle(role: .tableSpacer, bold: row.isHeader, tableRow: true)))
+                }
+            }
+            lineNumber += 1
+            location = end
+        }
+        result.decorations.append(.table(TableLayout(range: block.range, rows: rows)))
+    }
+
+    /// Cells are the text between unescaped pipes, trimmed; a leading or trailing pipe opens or closes the row.
+    private static func tableRow(_ line: NSRange, text: NSString, isHeader: Bool) -> TableRow {
+        var pipes: [Int] = []
+        var index = line.location
+        while index < NSMaxRange(line) {
+            let character = text.character(at: index)
+            if character == 0x5C {  // a backslash escapes the next character
+                index += 2
+                continue
+            }
+            if character == 0x7C { pipes.append(index) }
+            index += 1
+        }
+        var segments: [NSRange] = []
+        var cursor = line.location
+        for pipe in pipes {
+            segments.append(NSRange(location: cursor, length: pipe - cursor))
+            cursor = pipe + 1
+        }
+        segments.append(NSRange(location: cursor, length: NSMaxRange(line) - cursor))
+        var boundaries = pipes
+        func isBlank(_ range: NSRange) -> Bool {
+            text.substring(with: range).trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        if segments.count > 1, isBlank(segments[0]) {
+            segments.removeFirst()
+            boundaries.removeFirst()
+        }
+        if segments.count > 1, isBlank(segments[segments.count - 1]) {
+            segments.removeLast()
+            boundaries.removeLast()
+        }
+        return TableRow(line: line, cells: segments.map { trimmed($0, in: text) }, spacers: boundaries, isHeader: isHeader)
+    }
+
+    private static func trimmed(_ range: NSRange, in text: NSString) -> NSRange {
+        func isSpace(_ index: Int) -> Bool { text.character(at: index) == 0x20 || text.character(at: index) == 0x09 }
+        var start = range.location, end = NSMaxRange(range)
+        while start < end, isSpace(start) { start += 1 }
+        while end > start, isSpace(end - 1) { end -= 1 }
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// While edited, a table shows its source: monospaced, pipes and the delimiter row muted.
+    private static func emitTableSource(_ block: Block, text: NSString, into result: inout StyleResult) {
         result.runs.append(StyleRun(range: block.range, style: TextStyle(role: .codeInline)))
         let marker = TextStyle(role: .marker)
         var location = block.range.location

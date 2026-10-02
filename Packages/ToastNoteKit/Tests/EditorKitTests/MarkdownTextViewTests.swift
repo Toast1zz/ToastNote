@@ -118,6 +118,13 @@ private func isHidden(_ view: MarkdownTextView, character: Int) -> Bool {
         #expect(pasteboard.string(forType: .string) == "**粗**")
     }
 
+    @Test func readOnlyPaneStartsAtTheTop() {
+        // NSTextView keeps the insertion point visible when it resizes; at the end of the text that would
+        // scroll a freshly opened review pane down.
+        let view = makeView("# 标题\n\n正文", concealAll: true)
+        #expect(view.selectedRange() == NSRange(location: 0, length: 0))
+    }
+
     @Test func concealAllIsReadOnlyAndHidesEverything() {
         let view = makeView("# 标题\n\n**粗**", concealAll: true)
         #expect(!view.isEditable)

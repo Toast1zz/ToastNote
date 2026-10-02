@@ -1,15 +1,21 @@
 import AppKit
 import Foundation
 
-/// What a blank line sits in front of. Headings lose their `paragraphSpacingBefore` when their hidden `#`
-/// marker lands on the previous line fragment, so the blank line in front of them carries that space.
+/// What a blank line sits next to. Headings lose their `paragraphSpacingBefore` when their hidden `#`
+/// marker lands on the previous line fragment, so the blank line in front of them carries that space; boxed
+/// blocks (code, tables) get the same air above and below.
 public enum BlankLine: Hashable, Sendable {
-    case plain, beforeHeading(Int), beforeCode
+    case plain, besideBox
+    /// After a code block or table the heading also gets the air a box keeps below itself.
+    case beforeHeading(Int, afterBox: Bool = false)
 }
 
 public struct TextStyle: Hashable, Sendable {
     public enum Role: Hashable, Sendable {
         case body, heading(Int), codeInline, codeBlock, quote, link, tag, marker, taskDone, frontmatterSummary, imagePlaceholder
+        /// Invisible one-character stand-ins that give a hidden block its own line (a paragraph of only hidden
+        /// glyphs gets no line fragment), and the inner table pipes the view widens to the column width.
+        case rulePlaceholder, frontmatterPlaceholder, tableSpacer
     }
 
     public var role: Role
@@ -22,10 +28,12 @@ public struct TextStyle: Hashable, Sendable {
     public var tightSpacing = false
     /// A blank line between blocks; kept short so it does not double the paragraph gap.
     public var blankLine: BlankLine?
+    /// A row of a rendered table: padded on the left and evenly spaced.
+    public var tableRow = false
 
     public init(
         role: Role, bold: Bool = false, italic: Bool = false, strikethrough: Bool = false,
-        listDepth: Int? = nil, tightSpacing: Bool = false, blankLine: BlankLine? = nil
+        listDepth: Int? = nil, tightSpacing: Bool = false, blankLine: BlankLine? = nil, tableRow: Bool = false
     ) {
         self.role = role
         self.bold = bold
@@ -34,6 +42,7 @@ public struct TextStyle: Hashable, Sendable {
         self.listDepth = listDepth
         self.tightSpacing = tightSpacing
         self.blankLine = blankLine
+        self.tableRow = tableRow
     }
 }
 
@@ -95,6 +104,8 @@ public struct EditorTheme: Sendable, Equatable {
         case .link, .tag:
             attributes[.font] = font(size: bodySize, weight: .regular, style: style)
             attributes[.foregroundColor] = NSColor.controlAccentColor
+            // A tag or link inside a done task keeps its pill or color legible.
+            attributes[.strikethroughStyle] = 0
         case .marker:
             attributes[.foregroundColor] = secondaryColor
         case .taskDone:
@@ -104,14 +115,15 @@ public struct EditorTheme: Sendable, Equatable {
         case .frontmatterSummary:
             attributes[.font] = NSFont.systemFont(ofSize: bodySize)
             attributes[.foregroundColor] = secondaryColor
-        case .imagePlaceholder:
-            // The picture is drawn over this character's line; the character itself must not show.
+        case .imagePlaceholder, .rulePlaceholder, .frontmatterPlaceholder:
+            // The picture, rule or summary is drawn over this character's line; the character itself must not show.
             attributes[.font] = NSFont.systemFont(ofSize: 1)
+            attributes[.foregroundColor] = NSColor.clear
+        case .tableSpacer:
+            attributes[.font] = font(size: bodySize, weight: .regular, style: style)
             attributes[.foregroundColor] = NSColor.clear
         }
         if style.strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-        // CJK fonts have no italic face, so slant the glyphs synthetically.
-        if style.italic { attributes[.obliqueness] = 0.2 }
         // Markers inherit the paragraph style of the content they sit next to.
         if style.role != .marker { attributes[.paragraphStyle] = paragraphStyle(for: style) }
         return attributes
@@ -129,8 +141,8 @@ public struct EditorTheme: Sendable, Equatable {
         if let blank = style.blankLine {
             let height: CGFloat = switch blank {
             case .plain: 0.5 * bodySize
-            case .beforeHeading(let level): headingSpacing(level).before * headingSize(level)
-            case .beforeCode: 0.9 * bodySize
+            case .beforeHeading(let level, let afterBox): headingSpacing(level).before * headingSize(level) + (afterBox ? 0.6 * bodySize : 0)
+            case .besideBox: 1.3 * bodySize
             }
             paragraph.minimumLineHeight = height
             paragraph.maximumLineHeight = height
@@ -150,6 +162,15 @@ public struct EditorTheme: Sendable, Equatable {
             paragraph.tailIndent = -codePadding
         case .codeInline:
             setLineHeight(paragraph, 1.5 * codeSize)
+        case .rulePlaceholder:
+            setLineHeight(paragraph, 1.5 * bodySize)
+        case .frontmatterPlaceholder:
+            setLineHeight(paragraph, 1.75 * bodySize)
+            paragraph.paragraphSpacing = 1.2 * bodySize
+        case _ where style.tableRow:
+            setLineHeight(paragraph, 2 * bodySize)
+            paragraph.firstLineHeadIndent = codePadding
+            paragraph.headIndent = codePadding
         case .quote:
             setLineHeight(paragraph, 1.75 * bodySize)
             paragraph.paragraphSpacing = 0.6 * bodySize
