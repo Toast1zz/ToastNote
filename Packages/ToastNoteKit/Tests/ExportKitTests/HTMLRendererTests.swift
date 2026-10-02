@@ -32,9 +32,9 @@ private func render(_ markdown: String, notePath: String = "笔记.md") -> Strin
     }
 
     @Test func frontmatterRemoved() {
-        let html = render("---\ntags: [secret-tag]\ntitle: hidden\n---\n正文在这里")
+        let html = render("---\ntags: [secret-tag]\ntitle: frontmatter-title\n---\n正文在这里")
         #expect(!html.contains("secret-tag"))
-        #expect(!html.contains("hidden"))
+        #expect(!html.contains("frontmatter-title"))
         #expect(html.contains("正文在这里"))
     }
 
