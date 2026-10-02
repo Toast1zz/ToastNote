@@ -39,6 +39,15 @@ private func x(_ view: MarkdownTextView, _ index: Int) -> CGFloat {
         #expect(x(view, twoInBody) - x(view, 22) > 4 * 15)
     }
 
+    @Test func aWrappedLastCellContinuesUnderItsOwnColumn() {
+        let text = "| a | b |\n|---|---|\n| x | " + String(repeating: "很长的说明文字", count: 30) + " |\n\n尾"
+        let view = makeView(text)
+        let cell = (text as NSString).range(of: "很长").location
+        let style = view.textStorage!.attribute(.paragraphStyle, at: cell, effectiveRange: nil) as? NSParagraphStyle
+        let padding = view.textContainer!.lineFragmentPadding
+        #expect(abs((style?.headIndent ?? 0) + padding - x(view, cell)) < 0.5)
+    }
+
     @Test func tableColumnWidthsArePublishedForDrawing() {
         let view = makeView("| a | b |\n|---|---|\n| 1 | 2 |\n\n尾")
         #expect(view.tableColumnWidths[0]?.count == 2)

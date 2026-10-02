@@ -324,16 +324,18 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         guard let columns = tableColumnWidths[layout.range.location], !columns.isEmpty, !layout.rows.isEmpty, numberOfGlyphs > 0 else { return }
         let size = theme.bodySize
         let gap = 2 * theme.codePadding
-        let baselines = layout.rows.map { row -> CGFloat in
+        // A row spans from the baseline of its first line to the baseline of its last (rows can wrap).
+        let firstBaselines = layout.rows.map { row -> CGFloat in
             let anchor = row.cells.first { $0.length > 0 }?.location ?? row.spacers.first ?? row.line.location
             return baseline(ofCharacterAt: anchor)
         }
-        let lastRow = layout.rows[layout.rows.count - 1]
-        // A wrapped last row ends on its last line fragment.
-        let lastBaseline = lineRects(for: lastRow.line).count > 1 ? baseline(ofCharacterAt: NSMaxRange(lastRow.line) - 1) : baselines[baselines.count - 1]
+        let lastBaselines = layout.rows.enumerated().map { index, row -> CGFloat in
+            guard let last = row.cells.last(where: { $0.length > 0 }) else { return firstBaselines[index] }
+            return max(baseline(ofCharacterAt: NSMaxRange(last) - 1), firstBaselines[index])
+        }
         let pad = 0.35 * size
-        let top = baselines[0] - 1.0 * size - pad
-        let bottom = lastBaseline + 0.3 * size + pad
+        let top = firstBaselines[0] - 1.0 * size - pad
+        let bottom = lastBaselines[lastBaselines.count - 1] + 0.3 * size + pad
         let firstCell = layout.rows[0].cells.first { $0.length > 0 }?.location ?? layout.rows[0].line.location
         let textX = textStart(afterMarkerAt: max(firstCell - 1, layout.range.location)).x
         let left = max(textX - theme.codePadding, 0)
@@ -344,13 +346,16 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 
         NSGraphicsContext.saveGraphicsState()
         outline.addClip()
-        if baselines.count > 1 {
-            let headerBottom = (baselines[0] + 0.3 * size + baselines[1] - 1.0 * size) / 2
+        func separator(after index: Int) -> CGFloat {
+            (lastBaselines[index] + 0.3 * size + firstBaselines[index + 1] - 1.0 * size) / 2
+        }
+        if layout.rows.count > 1 {
+            let headerBottom = separator(after: 0)
             fill(NSRect(x: box.minX, y: box.minY, width: box.width, height: headerBottom - box.minY), origin: origin, radius: 0, color: Self.codeWash)
         }
         let rule = NSColor.separatorColor
-        for index in 1..<max(baselines.count, 1) {
-            let y = (baselines[index - 1] + 0.3 * size + baselines[index] - 1.0 * size) / 2
+        for index in 1..<max(layout.rows.count, 1) {
+            let y = separator(after: index - 1)
             fill(NSRect(x: box.minX, y: y - 0.5, width: box.width, height: 1), origin: origin, radius: 0, color: rule)
         }
         var x = textX

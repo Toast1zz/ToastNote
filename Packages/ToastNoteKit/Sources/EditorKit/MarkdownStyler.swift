@@ -7,12 +7,16 @@ public struct TableRow: Equatable, Sendable {
     /// Inner pipes kept as invisible spacers; the view widens each so the next cell starts on its column.
     public var spacers: [Int]
     public var isHeader: Bool
+    /// The opening pipe, kept as a zero-width stand-in: leading hidden glyphs would ride on the previous line
+    /// fragment and put the row's text on a continuation line (which uses the wrap indent).
+    public var leadingPipe: Int?
 
-    public init(line: NSRange, cells: [NSRange], spacers: [Int], isHeader: Bool) {
+    public init(line: NSRange, cells: [NSRange], spacers: [Int], isHeader: Bool, leadingPipe: Int? = nil) {
         self.line = line
         self.cells = cells
         self.spacers = spacers
         self.isHeader = isHeader
+        self.leadingPipe = leadingPipe
     }
 }
 
@@ -348,11 +352,12 @@ public enum MarkdownStyler {
             } else {
                 let row = tableRow(line, text: text, isHeader: lineNumber == 0)
                 rows.append(row)
-                result.hidden.append(contentsOf: subtract(row.cells + row.spacers.map { NSRange(location: $0, length: 1) }, from: line))
+                let kept = row.cells + (row.spacers + [row.leadingPipe].compactMap { $0 }).map { NSRange(location: $0, length: 1) }
+                result.hidden.append(contentsOf: subtract(kept, from: line))
                 for cell in row.cells where cell.length > 0 {
                     result.runs.append(StyleRun(range: cell, style: TextStyle(role: .body, bold: row.isHeader, tableRow: true)))
                 }
-                for spacer in row.spacers {
+                for spacer in row.spacers + [row.leadingPipe].compactMap({ $0 }) {
                     result.runs.append(StyleRun(range: NSRange(location: spacer, length: 1), style: TextStyle(role: .tableSpacer, bold: row.isHeader, tableRow: true)))
                 }
             }
@@ -383,18 +388,19 @@ public enum MarkdownStyler {
         }
         segments.append(NSRange(location: cursor, length: NSMaxRange(line) - cursor))
         var boundaries = pipes
+        var leadingPipe: Int?
         func isBlank(_ range: NSRange) -> Bool {
             text.substring(with: range).trimmingCharacters(in: .whitespaces).isEmpty
         }
         if segments.count > 1, isBlank(segments[0]) {
             segments.removeFirst()
-            boundaries.removeFirst()
+            leadingPipe = boundaries.removeFirst()
         }
         if segments.count > 1, isBlank(segments[segments.count - 1]) {
             segments.removeLast()
             boundaries.removeLast()
         }
-        return TableRow(line: line, cells: segments.map { trimmed($0, in: text) }, spacers: boundaries, isHeader: isHeader)
+        return TableRow(line: line, cells: segments.map { trimmed($0, in: text) }, spacers: boundaries, isHeader: isHeader, leadingPipe: leadingPipe)
     }
 
     private static func trimmed(_ range: NSRange, in text: NSString) -> NSRange {

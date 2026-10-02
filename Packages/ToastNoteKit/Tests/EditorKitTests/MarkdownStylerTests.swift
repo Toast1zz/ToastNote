@@ -210,14 +210,15 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
 
     @Test func inactiveTableBecomesAGrid() {
         let result = style("| a | b |\n|---|---|\n| 1 | 2 |")
-        // Outer pipes, cell padding and the delimiter row (with its line break) are hidden; inner pipes stay as
-        // invisible spacers that the view widens to the column width.
+        // Cell padding, the closing pipe and the delimiter row (with its line break) are hidden; inner pipes stay
+        // as invisible spacers that the view widens to the column width. The opening pipe stays too (the view
+        // cancels its width): leading hidden glyphs would move the row's text onto a continuation line.
         #expect(result.hidden.sorted { $0.location < $1.location } == [
-            r(0, 2), r(3, 1), r(5, 1), r(7, 2), r(10, 10), r(20, 2), r(23, 1), r(25, 1), r(27, 2),
+            r(1, 1), r(3, 1), r(5, 1), r(7, 2), r(10, 10), r(21, 1), r(23, 1), r(25, 1), r(27, 2),
         ])
         let layout = TableLayout(range: r(0, 29), rows: [
-            TableRow(line: r(0, 9), cells: [r(2, 1), r(6, 1)], spacers: [4], isHeader: true),
-            TableRow(line: r(20, 9), cells: [r(22, 1), r(26, 1)], spacers: [24], isHeader: false),
+            TableRow(line: r(0, 9), cells: [r(2, 1), r(6, 1)], spacers: [4], isHeader: true, leadingPipe: 0),
+            TableRow(line: r(20, 9), cells: [r(22, 1), r(26, 1)], spacers: [24], isHeader: false, leadingPipe: 20),
         ])
         #expect(result.decorations.contains(.table(layout)))
         #expect(result.runs.contains { $0.range == r(2, 1) && $0.style.bold })

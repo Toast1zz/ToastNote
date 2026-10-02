@@ -530,12 +530,23 @@ public final class MarkdownTextView: NSTextView {
             let columnCount = widths.map(\.count).max() ?? 0
             let columns = (0..<columnCount).map { column in widths.compactMap { $0.indices.contains(column) ? $0[column] : nil }.max() ?? 0 }
             tableColumnWidths[layout.range.location] = columns
+            // Continuation lines of a wrapping row start under the last column, where long text usually is.
+            let lastColumnStart = theme.codePadding + columns.dropLast().reduce(0) { $0 + $1 + tableGap }
             for (rowIndex, row) in layout.rows.enumerated() {
+                if let pipe = row.leadingPipe {
+                    let pipeRange = NSRange(location: pipe, length: 1)
+                    storage.addAttribute(.kern, value: -storage.attributedSubstring(from: pipeRange).size().width, range: pipeRange)
+                }
                 for (column, spacer) in row.spacers.enumerated() where columns.indices.contains(column) {
                     let spacerRange = NSRange(location: spacer, length: 1)
                     let spacerWidth = storage.attributedSubstring(from: spacerRange).size().width
                     let cellWidth = widths[rowIndex].indices.contains(column) ? widths[rowIndex][column] : 0
                     storage.addAttribute(.kern, value: columns[column] + tableGap - cellWidth - spacerWidth, range: spacerRange)
+                }
+                if let existing = storage.attribute(.paragraphStyle, at: row.line.location, effectiveRange: nil) as? NSParagraphStyle,
+                   let style = existing.mutableCopy() as? NSMutableParagraphStyle, style.headIndent != lastColumnStart {
+                    style.headIndent = lastColumnStart
+                    storage.addAttribute(.paragraphStyle, value: style, range: row.line)
                 }
             }
         }
