@@ -84,9 +84,15 @@ public enum MarkdownStyler {
             break
         }
 
-        // Base text style over the visible content.
+        // Paragraph-level attributes (spacing, indents) come from a paragraph's first character, which is
+        // often a marker, so the base style covers the whole block, not just its visible content.
+        var listIndent = false
+        if case .listItem(let ordered, _, _) = block.kind { listIndent = !ordered }
+        if block.range.length > 0 {
+            result.runs.append(StyleRun(range: block.range, style: TextStyle(role: base, listIndent: listIndent)))
+        }
         for segment in contentSegments(of: block) where segment.length > 0 {
-            result.runs.append(StyleRun(range: segment, style: TextStyle(role: base)))
+            result.runs.append(StyleRun(range: segment, style: TextStyle(role: base, listIndent: listIndent)))
         }
 
         emitBlockSyntax(block, isActive: isActive, into: &result)

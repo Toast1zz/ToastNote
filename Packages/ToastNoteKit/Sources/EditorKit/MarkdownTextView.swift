@@ -105,6 +105,8 @@ public final class MarkdownTextView: NSTextView {
         concealingLayoutManager.invalidateGlyphs(forCharacterRange: range, changeInLength: 0, actualCharacterRange: nil)
         concealingLayoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
         decorations = result.decorations
+        concealingLayoutManager.decorations = result.decorations
+        concealingLayoutManager.theme = theme
         typingAttributes = base
         needsDisplay = true
     }
@@ -128,6 +130,95 @@ public final class MarkdownTextView: NSTextView {
         let text = string as NSString
         let result = MarkdownStyler.style(blocks: blocks, text: text, active: activeBlocks, concealAll: false)
         apply(result, in: union)
+    }
+
+    // MARK: Tasks and links
+
+    /// Flips `[ ]` and `[x]` of the task item at `index` as one undoable edit.
+    public func toggleTask(atCharacterIndex index: Int) {
+        guard let block = blocks.first(where: { block in
+            guard case .listItem(_, let task, _) = block.kind, task != nil else { return false }
+            return index >= block.range.location && index <= NSMaxRange(block.range)
+        }), case .listItem(_, let task?, _) = block.kind, let syntax = block.syntaxRanges.first else { return }
+        let marker = (string as NSString).substring(with: syntax) as NSString
+        let bracket = marker.range(of: "[")
+        guard bracket.location != NSNotFound else { return }
+        let target = NSRange(location: syntax.location + bracket.location + 1, length: 1)
+        let replacement = task == .open ? "x" : " "
+        guard shouldChangeText(in: target, replacementString: replacement) else { return }
+        replaceCharacters(in: target, with: replacement)
+        didChangeText()
+        undoManager?.setActionName("切换任务")
+    }
+
+    /// The drawn checkbox of the task item containing `index`, in view coordinates; nil while it is not drawn.
+    public func checkboxRect(forCharacterIndex index: Int) -> NSRect? {
+        guard let decoration = decorations.first(where: { decoration in
+            guard case .checkbox(let at, _) = decoration, let block = blocks.first(where: { $0.syntaxRanges.first?.location == at }) else { return false }
+            return index >= block.range.location && index <= NSMaxRange(block.range)
+        }), case .checkbox(let at, _) = decoration else { return nil }
+        concealingLayoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: (string as NSString).length))
+        let rect = concealingLayoutManager.gutterRect(forMarkerAt: at, size: theme.bodySize)
+        let origin = textContainerOrigin
+        return rect.offsetBy(dx: origin.x, dy: origin.y)
+    }
+
+    /// URL of the link or bare URL at `index`, if any.
+    public func linkURL(atCharacterIndex index: Int) -> URL? {
+        for block in blocks {
+            for span in block.inlines where NSLocationInRange(index, span.range) {
+                switch span.kind {
+                case .link(let url): return URL(string: url)
+                case .bareURL(let url): return URL(string: url)
+                default: continue
+                }
+            }
+        }
+        return nil
+    }
+
+    public override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        for case .checkbox(let at, _) in decorations {
+            if let rect = checkboxRect(forCharacterIndex: at), rect.contains(point) {
+                toggleTask(atCharacterIndex: at)
+                return
+            }
+        }
+        if event.modifierFlags.contains(.command),
+           let url = linkURL(atCharacterIndex: characterIndexForInsertion(at: point)) {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    // The pointing hand shows over links only while ⌘ is held.
+    public override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        window?.invalidateCursorRects(for: self)
+    }
+
+    public override func resetCursorRects() {
+        super.resetCursorRects()
+        guard NSEvent.modifierFlags.contains(.command) else { return }
+        for block in blocks {
+            for span in block.inlines {
+                switch span.kind {
+                case .link, .bareURL:
+                    let glyphs = concealingLayoutManager.glyphRange(forCharacterRange: span.range, actualCharacterRange: nil)
+                    guard let container = textContainer else { continue }
+                    let origin = textContainerOrigin
+                    concealingLayoutManager.enumerateEnclosingRects(
+                        forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: container
+                    ) { rect, _ in
+                        self.addCursorRect(rect.offsetBy(dx: origin.x, dy: origin.y), cursor: .pointingHand)
+                    }
+                default:
+                    continue
+                }
+            }
+        }
     }
 
     // MARK: Layout

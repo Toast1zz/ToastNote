@@ -92,6 +92,17 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
         #expect(result.runs.contains { $0.style.role == .heading(1) && $0.style.bold && $0.range == r(6, 1) })
     }
 
+    @Test func blockStyleCoversMarkersSoParagraphAttributesApply() {
+        // A paragraph's spacing comes from its first character, which for headings is a (hidden) marker.
+        let result = style("## 标题")
+        #expect(result.run(r(0, 5), role: .heading(2)) != nil)
+    }
+
+    @Test func bulletItemsReserveAGutterButOrderedItemsDoNot() {
+        #expect(style("- 项").runs.contains { $0.range == r(0, 3) && $0.style.listIndent })
+        #expect(!style("1. 项").runs.contains { $0.style.listIndent })
+    }
+
     @Test func bulletDecoration() {
         #expect(style("- 项").decorations.contains(.bullet(at: 0, depth: 0)))
     }

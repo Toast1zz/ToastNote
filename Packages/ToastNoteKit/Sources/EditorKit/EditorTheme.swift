@@ -10,12 +10,15 @@ public struct TextStyle: Hashable, Sendable {
     public var bold = false
     public var italic = false
     public var strikethrough = false
+    /// Bullet and task items reserve a gutter in front of the text for the drawn bullet or checkbox.
+    public var listIndent = false
 
-    public init(role: Role, bold: Bool = false, italic: Bool = false, strikethrough: Bool = false) {
+    public init(role: Role, bold: Bool = false, italic: Bool = false, strikethrough: Bool = false, listIndent: Bool = false) {
         self.role = role
         self.bold = bold
         self.italic = italic
         self.strikethrough = strikethrough
+        self.listIndent = listIndent
     }
 }
 
@@ -74,14 +77,20 @@ public struct EditorTheme: Sendable {
         }
         if style.strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
         // Markers inherit the paragraph style of the content they sit next to.
-        if style.role != .marker { attributes[.paragraphStyle] = paragraphStyle(for: style.role) }
+        if style.role != .marker { attributes[.paragraphStyle] = paragraphStyle(for: style) }
         return attributes
     }
 
+    /// Width reserved in front of bullet and task items.
+    var listGutter: CGFloat { 1.5 * bodySize }
+    /// Inner padding of code blocks and left indent of quotes (spec §9.3).
+    var codePadding: CGFloat { 12 }
+    var quoteIndent: CGFloat { 16 }
+
     /// Line height and spacing live in NSParagraphStyle, never in extra blank lines (spec §9.3).
-    func paragraphStyle(for role: TextStyle.Role) -> NSParagraphStyle {
+    func paragraphStyle(for style: TextStyle) -> NSParagraphStyle {
         let paragraph = NSMutableParagraphStyle()
-        switch role {
+        switch style.role {
         case .heading(let level):
             let (before, after): (CGFloat, CGFloat) = switch level {
             case 1: (1.2, 0.4)
@@ -93,11 +102,25 @@ public struct EditorTheme: Sendable {
             paragraph.lineHeightMultiple = 1.35
             paragraph.paragraphSpacingBefore = before * size
             paragraph.paragraphSpacing = after * size
-        case .codeBlock, .codeInline:
+        case .codeBlock:
             paragraph.lineHeightMultiple = 1.5
+            paragraph.firstLineHeadIndent = codePadding
+            paragraph.headIndent = codePadding
+            paragraph.tailIndent = -codePadding
+        case .codeInline:
+            paragraph.lineHeightMultiple = 1.5
+        case .quote:
+            paragraph.lineHeightMultiple = 1.75
+            paragraph.paragraphSpacing = 0.6 * bodySize
+            paragraph.firstLineHeadIndent = quoteIndent
+            paragraph.headIndent = quoteIndent
         default:
             paragraph.lineHeightMultiple = 1.75
             paragraph.paragraphSpacing = 0.6 * bodySize
+            if style.listIndent {
+                paragraph.firstLineHeadIndent = listGutter
+                paragraph.headIndent = listGutter
+            }
         }
         return paragraph
     }
