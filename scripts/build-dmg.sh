@@ -32,6 +32,18 @@ xcodebuild -project ToastNote.xcodeproj -scheme ToastNote -configuration Release
 
 [ -d "$APP" ] || { echo "error: $APP was not built" >&2; exit 1; }
 
+if [ "$IDENTITY" = "-" ]; then
+  # An ad-hoc app has no team ID, so the hardened runtime's library validation refuses to load the embedded
+  # frameworks (Sparkle). Sign everything ad hoc and opt out of library validation for this build only;
+  # Developer ID builds are signed with a team and keep it on.
+  echo "==> Re-signing ad hoc (app and embedded frameworks, library validation off)"
+  ENTITLEMENTS="$(mktemp -t toastnote-entitlements).plist"
+  cp App/ToastNote.entitlements "$ENTITLEMENTS"
+  /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.disable-library-validation bool true" "$ENTITLEMENTS"
+  codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP"
+  rm -f "$ENTITLEMENTS"
+fi
+
 echo "==> Creating $DMG"
 STAGING="$(mktemp -d)"
 trap 'rm -rf "$STAGING"' EXIT
