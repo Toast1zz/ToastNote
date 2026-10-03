@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// A note in the sidebar: title only, no icon (spec §1.2.3). Rows are 28 pt high; rows in the open list
-/// show a close button while hovered (spec §9.5).
+/// A note in the sidebar: a `doc.text` label like every other sidebar row, so icons share one column and
+/// titles another (Finder, Mail and Notes sidebars all work this way). Rows in the open list show a close
+/// button while hovered (spec §9.5); the system sets the row height.
 struct NoteRow: View {
     let path: String
     let title: String
@@ -12,7 +13,7 @@ struct NoteRow: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(title)
+            Label(title, systemImage: "doc.text")
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
@@ -21,7 +22,7 @@ struct NoteRow: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .frame(width: 18, height: 18)
+                        .frame(width: 16, height: 16)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -29,7 +30,6 @@ struct NoteRow: View {
                 .accessibilityLabel("关闭 \(title)")
             }
         }
-        .frame(height: SidebarMetrics.rowHeight)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .help(path)

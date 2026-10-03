@@ -1,42 +1,52 @@
+import AppKit
 import IndexKit
 import SwiftUI
 
-/// The search field at the top of the sidebar (⌘⇧F focuses it; Esc or the clear button leaves search).
-struct SidebarSearchField: View {
-    @Bindable var model: AppModel
-    @FocusState private var isFocused: Bool
+/// The search field at the top of the sidebar: a system `NSSearchField` (magnifier, clear button, Esc to
+/// leave). ⌘⇧F focuses it.
+struct SidebarSearchField: NSViewRepresentable {
+    let model: AppModel
 
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            TextField("搜索", text: $model.searchText)
-                .textFieldStyle(.plain)
-                .focused($isFocused)
-                .accessibilityLabel("搜索笔记")
-                .onKeyPress(.escape) {
-                    model.clearSearch()
-                    isFocused = false
-                    return .handled
-                }
-            if !model.searchText.isEmpty {
-                Button { model.clearSearch() } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("清除搜索")
-                .accessibilityLabel("清除搜索")
-            }
+    func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let field = NSSearchField()
+        field.placeholderString = "搜索"
+        field.sendsSearchStringImmediately = true
+        field.delegate = context.coordinator
+        field.toolTip = "搜索所有笔记（⌘⇧F）"
+        field.setAccessibilityLabel("搜索笔记")
+        context.coordinator.focusToken = model.searchFocusToken
+        return field
+    }
+
+    func updateNSView(_ field: NSSearchField, context: Context) {
+        context.coordinator.model = model
+        if field.stringValue != model.searchText { field.stringValue = model.searchText }
+        if context.coordinator.focusToken != model.searchFocusToken {
+            context.coordinator.focusToken = model.searchFocusToken
+            DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 28)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(0.06)))
-        .padding(.horizontal, 10)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-        .help("搜索所有笔记（⌘⇧F）")
-        .onChange(of: model.searchFocusToken) { _, _ in isFocused = true }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var model: AppModel
+        var focusToken = 0
+
+        init(model: AppModel) { self.model = model }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSSearchField else { return }
+            model.searchText = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            guard selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+            model.clearSearch()
+            control.window?.makeFirstResponder(nil)
+            return true
+        }
     }
 }
 
