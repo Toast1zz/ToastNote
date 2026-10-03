@@ -42,6 +42,10 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.toastnote.mac
+        # Xcode 27 no longer supplies a default; XcodeGen does not emit one either.
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        # Same for the runpath: without it the embedded Sparkle.framework is not found at launch.
+        LD_RUNPATH_SEARCH_PATHS: ["$(inherited)", "@executable_path/../Frameworks"]
         # Set by the release workflow (github.repository). The owner here is a placeholder for local builds.
         GITHUB_REPOSITORY: OWNER/ToastNote
         # EdDSA public key from Sparkle's generate_keys; empty disables updates (see docs/RELEASING.md).
