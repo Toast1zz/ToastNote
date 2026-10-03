@@ -46,6 +46,42 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         return glyphRange.length
     }
 
+    /// Baseline of a fixed-height line, measured from its top: the font box is centered in the line (half the
+    /// extra leading above, half below, as in CSS), so the caret and the selection sit evenly around the text.
+    /// The system font of that size is used, never the glyphs' own fonts (see the delegate method below).
+    static func baselineOffset(lineHeight: CGFloat, fontSize: CGFloat) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: fontSize)
+        let textHeight = font.ascender - font.descender
+        return ((lineHeight - textHeight) / 2 + font.ascender).rounded()
+    }
+
+    /// With a fixed line height TextKit puts the baseline at `height - (deepest descent of any glyph on the line)`:
+    /// all extra leading lands above the text, and the glyphs come from fallback fonts (CJK next to Latin) and
+    /// from markers that appear when a block turns active, so the same style would sit at different heights
+    /// from line to line, and a heading would shift by a couple of points when the caret enters it. The
+    /// baseline is set from the line height and the paragraph's font size alone instead.
+    func layoutManager(
+        _ layoutManager: NSLayoutManager,
+        shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<NSRect>,
+        lineFragmentUsedRect: UnsafeMutablePointer<NSRect>,
+        baselineOffset: UnsafeMutablePointer<CGFloat>,
+        in textContainer: NSTextContainer,
+        forGlyphRange glyphRange: NSRange
+    ) -> Bool {
+        guard let storage = layoutManager.textStorage, glyphRange.length > 0 else { return false }
+        let index = layoutManager.characterIndexForGlyph(at: glyphRange.location)
+        guard index < storage.length,
+              let paragraph = storage.attribute(.paragraphStyle, at: index, effectiveRange: nil) as? NSParagraphStyle,
+              paragraph.maximumLineHeight > 0, paragraph.minimumLineHeight == paragraph.maximumLineHeight,
+              abs(lineFragmentUsedRect.pointee.height - paragraph.maximumLineHeight) < 0.5,
+              let font = storage.attribute(.font, at: index, effectiveRange: nil) as? NSFont,
+              font.pointSize >= 8
+        else { return false }
+        // Only the size is taken from `font`: AppKit swaps CJK characters to a fallback font in the storage.
+        baselineOffset.pointee = Self.baselineOffset(lineHeight: lineFragmentUsedRect.pointee.height, fontSize: font.pointSize)
+        return true
+    }
+
     /// Keeps `hidden` aligned with the text while an edit is processed. AppKit may generate glyphs for the
     /// shifted text before the view has restyled; with stale indices the wrong characters would be hidden.
     override func processEditing(
@@ -111,7 +147,7 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 
     // MARK: Text-relative geometry
     //
-    // Line fragments are taller than the text (fixed line heights put the extra space above the glyphs), so
+    // Line fragments are taller than the text (fixed line heights add leading around the glyphs), so
     // backgrounds are measured from the baseline instead of from the line box.
 
     /// Baseline of the line containing the character at `index`, in container coordinates.
@@ -149,6 +185,22 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         let top = baseline(ofCharacterAt: first) - 1.0 * codeSize - padding
         let bottom = baseline(ofCharacterAt: last) + 0.3 * codeSize + padding
         return NSRect(x: columnLeft, y: top, width: columnWidth, height: bottom - top)
+    }
+
+    /// Quote bar from the top of the first line of text to the bottom of the last. Line boxes are not used: a
+    /// hidden `> ` rides on the blank line in front, whose box would stretch the bar above the text.
+    func quoteBarRect(for range: NSRange) -> NSRect? {
+        guard numberOfGlyphs > 0, range.length > 0, let text = textStorage?.string as NSString?,
+              NSMaxRange(range) <= text.length else { return nil }
+        func skip(_ index: Int) -> Bool { hidden.contains(index) || text.character(at: index) == 0x0A }
+        var first = range.location
+        while first < NSMaxRange(range) - 1, skip(first) { first += 1 }
+        var last = NSMaxRange(range) - 1
+        while last > first, skip(last) { last -= 1 }
+        let padding: CGFloat = 2
+        let top = baseline(ofCharacterAt: first) - 1.0 * theme.bodySize - padding
+        let bottom = baseline(ofCharacterAt: last) + 0.3 * theme.bodySize + padding
+        return NSRect(x: columnLeft, y: top, width: 3, height: bottom - top)
     }
 
     // MARK: Drawing
@@ -205,14 +257,11 @@ final class ConcealingLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             case .tagPill(let range):
                 guard intersects(range, visible) else { continue }
                 for rect in enclosingRects(for: range) {
-                    let pill = textHugging(rect, fontSize: theme.bodySize, verticalPadding: 1).insetBy(dx: -4, dy: 0)
+                    let pill = textHugging(rect, fontSize: theme.bodySize, verticalPadding: 1).insetBy(dx: -MarkdownTextView.tagPillInset, dy: 0)
                     fill(pill, origin: origin, radius: pill.height / 2, color: accent.withAlphaComponent(0.12))
                 }
             case .quoteBar(let range):
-                guard intersects(range, visible) else { continue }
-                let rects = lineRects(for: range)
-                guard let first = rects.first, let last = rects.last else { continue }
-                let bar = NSRect(x: columnLeft, y: first.minY, width: 3, height: last.maxY - first.minY)
+                guard intersects(range, visible), let bar = quoteBarRect(for: range) else { continue }
                 fill(bar, origin: origin, radius: 1.5, color: accent.withAlphaComponent(0.4))
             case .rule(let range):
                 guard intersects(range, visible), let first = lineRects(for: NSRange(location: range.location, length: 1)).first else { continue }

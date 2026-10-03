@@ -220,6 +220,9 @@ final class AppModel {
         let query = searchText
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty, let index else {
             searchResults = []
+            // Clearing the search also clears the matches it marked in the editor.
+            pendingHighlight = nil
+            _ = activeTextView?.highlightMatches(of: [])
             return
         }
         // 120 ms debounce while typing (spec §10.4).

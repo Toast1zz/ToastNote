@@ -30,8 +30,9 @@ struct LiveEditorView: NSViewRepresentable {
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .textBackgroundColor
+        // The text view draws the background and fills the visible height. A scroll view that draws its own
+        // background gets an extra layer on macOS 26 that takes the clicks over the lower part of the text.
+        scrollView.drawsBackground = false
         scrollView.documentView = textView
         context.coordinator.textView = textView
         // New and freshly opened notes take the keyboard with the caret at the start.

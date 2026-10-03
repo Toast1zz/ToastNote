@@ -96,8 +96,8 @@ struct SyncedRenderedPane: NSViewRepresentable {
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .textBackgroundColor
+        // As in the editor: the text view draws the background (see `LiveEditorView`).
+        scrollView.drawsBackground = false
         scrollView.documentView = textView
         sync.register(side, textView: textView, scrollView: scrollView)
         return scrollView

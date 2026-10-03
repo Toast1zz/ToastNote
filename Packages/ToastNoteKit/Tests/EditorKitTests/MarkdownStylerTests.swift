@@ -156,10 +156,10 @@ struct StylerCase: Sendable, CustomTestStringConvertible {
         let result = style(text)
         #expect(result.hidden.contains(r(4, 2)))                  // the two source spaces
         #expect(result.runs.contains { $0.range == r(4, 5) && $0.style.listDepth == 1 })
-        // The caret inside the item shows the source indentation, so the paragraph indent drops to one gutter.
+        // The caret inside the item shows the source indentation and marker, which hang in the gutter.
         let active = style(text, caret: 7)
         #expect(!active.hidden.contains(r(4, 2)))
-        #expect(active.runs.contains { $0.range == r(4, 5) && $0.style.listDepth == 0 })
+        #expect(active.runs.contains { $0.range == r(4, 5) && $0.style.listDepth == 1 && $0.style.hangingPrefix == "  - " })
     }
 
     @Test func listItemsReserveAGutter() {

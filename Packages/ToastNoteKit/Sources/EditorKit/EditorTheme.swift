@@ -1,9 +1,9 @@
 import AppKit
 import Foundation
 
-/// What a blank line sits next to. Headings lose their `paragraphSpacingBefore` when their hidden `#`
-/// marker lands on the previous line fragment, so the blank line in front of them carries that space; boxed
-/// blocks (code, tables) get the same air above and below.
+/// What a blank line sits next to. A heading has no space of its own in front (a `paragraphSpacingBefore`
+/// would come and go with its hidden `#` marker and make the text jump), so the blank line in front of it
+/// carries that space; boxed blocks (code, tables) get the same air above and below.
 public enum BlankLine: Hashable, Sendable {
     case plain, besideBox
     /// After a code block or table the heading also gets the air a box keeps below itself.
@@ -30,10 +30,14 @@ public struct TextStyle: Hashable, Sendable {
     public var blankLine: BlankLine?
     /// A row of a rendered table: padded on the left and evenly spaced.
     public var tableRow = false
+    /// The source in front of an edited list item's text (indentation and marker). It hangs in the gutter, so
+    /// the text starts where it does while the bullet is drawn instead.
+    public var hangingPrefix: String?
 
     public init(
         role: Role, bold: Bool = false, italic: Bool = false, strikethrough: Bool = false,
-        listDepth: Int? = nil, tightSpacing: Bool = false, blankLine: BlankLine? = nil, tableRow: Bool = false
+        listDepth: Int? = nil, tightSpacing: Bool = false, blankLine: BlankLine? = nil, tableRow: Bool = false,
+        hangingPrefix: String? = nil
     ) {
         self.role = role
         self.bold = bold
@@ -43,6 +47,7 @@ public struct TextStyle: Hashable, Sendable {
         self.tightSpacing = tightSpacing
         self.blankLine = blankLine
         self.tableRow = tableRow
+        self.hangingPrefix = hangingPrefix
     }
 }
 
@@ -150,10 +155,12 @@ public struct EditorTheme: Sendable, Equatable {
         }
         switch style.role {
         case .heading(let level):
-            let (before, after) = headingSpacing(level)
+            let after = headingSpacing(level).after
             let size = headingSize(level)
             setLineHeight(paragraph, 1.35 * size)
-            paragraph.paragraphSpacingBefore = before * size
+            // No `paragraphSpacingBefore`: the blank line in front carries the gap (see `BlankLine`). A heading's
+            // own gap would only apply while its `#` is visible (or after a relayout), so the text would jump
+            // every time the caret enters or leaves a heading.
             paragraph.paragraphSpacing = after * size
         case .codeBlock:
             setLineHeight(paragraph, 1.5 * codeSize)
@@ -173,18 +180,41 @@ public struct EditorTheme: Sendable, Equatable {
             paragraph.headIndent = codePadding
         case .quote:
             setLineHeight(paragraph, 1.75 * bodySize)
-            paragraph.paragraphSpacing = 0.6 * bodySize
+            paragraph.paragraphSpacing = style.tightSpacing ? 0 : 0.6 * bodySize
             paragraph.firstLineHeadIndent = quoteIndent
             paragraph.headIndent = quoteIndent
         default:
             setLineHeight(paragraph, 1.75 * bodySize)
-            paragraph.paragraphSpacing = (style.tightSpacing ? 0.2 : 0.6) * bodySize
+            // List items sit right under each other. (A gap would only show while the next item is edited: when
+            // hidden, that item's marker rides on the line before and swallows the gap, so the text would jump.)
+            paragraph.paragraphSpacing = style.tightSpacing ? 0 : 0.6 * bodySize
             if let depth = style.listDepth {
-                paragraph.firstLineHeadIndent = listGutter * CGFloat(depth + 1)
-                paragraph.headIndent = listGutter * CGFloat(depth + 1)
+                let indent = listGutter * CGFloat(depth + 1)
+                let prefix = style.hangingPrefix.map { hangingPrefixWidth($0, depth: depth) } ?? 0
+                paragraph.firstLineHeadIndent = max(indent - prefix, 0)
+                paragraph.headIndent = indent
             }
         }
         return paragraph
+    }
+
+    /// Width of an edited list item's source prefix as laid out, after `hangingPrefixKern` tightened it.
+    func hangingPrefixWidth(_ prefix: String, depth: Int) -> CGFloat {
+        min(naturalWidth(of: prefix), listGutter * CGFloat(depth + 1))
+    }
+
+    private func naturalWidth(of prefix: String) -> CGFloat {
+        (prefix as NSString).size(withAttributes: [.font: font(size: bodySize, weight: .regular, style: TextStyle(role: .body))]).width
+    }
+
+    /// Kerning for each character of a prefix that is wider than its gutter (`- [ ] ` is), so it fits and the
+    /// item's text keeps its place; nil when it already fits.
+    func hangingPrefixKern(_ prefix: String, depth: Int) -> CGFloat? {
+        let natural = naturalWidth(of: prefix)
+        let fitted = hangingPrefixWidth(prefix, depth: depth)
+        let count = (prefix as NSString).length
+        guard natural > fitted + 0.5, count > 0 else { return nil }
+        return (fitted - natural) / CGFloat(count)
     }
 
     /// Space before and after a heading, in ems of its own size (spec §9.3).

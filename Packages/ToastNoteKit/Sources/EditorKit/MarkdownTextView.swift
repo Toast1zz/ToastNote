@@ -65,17 +65,61 @@ public final class MarkdownTextView: NSTextView {
         guard showsPlaceholder, let placeholder else { return }
         var attributes = theme.attributes(for: TextStyle(role: .body))
         attributes[.foregroundColor] = NSColor.placeholderTextColor
+        // Laid out by a private layout manager of the same kind with the body paragraph style, so the hint sits
+        // on exactly the baseline the first typed character will get.
+        let storage = NSTextStorage(string: placeholder, attributes: attributes)
+        let layoutManager = ConcealingLayoutManager()
+        let container = NSTextContainer(size: NSSize(width: max(textContainer?.size.width ?? 0, 100), height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = textContainer?.lineFragmentPadding ?? 0
+        storage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(container)
+        layoutManager.drawGlyphs(forGlyphRange: layoutManager.glyphRange(for: container), at: textContainerOrigin)
+    }
+
+    /// Overriding this also keeps AppKit from drawing its own indicator view, whose height is the whole fixed
+    /// line. The bar is redrawn at the height of the font around the baseline.
+    public override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        super.drawInsertionPoint(in: caretRect(from: rect), color: color, turnedOn: flag)
+    }
+
+    /// The caret spans the font's ascent and descent around the baseline of the line it is on.
+    func caretRect(from rect: NSRect) -> NSRect {
+        guard let layoutManager, rect.width < 4, selectedRange().length == 0 else { return rect }
+        let text = string as NSString
+        let location = selectedRange().location
         let origin = textContainerOrigin
-        let padding = textContainer?.lineFragmentPadding ?? 0
-        // Sits where the first typed character will go: fixed line heights put the text at the line's bottom.
-        let font = attributes[.font] as? NSFont ?? .systemFont(ofSize: theme.bodySize)
-        let lineHeight = 1.75 * theme.bodySize
-        let top = origin.y + lineHeight - font.ascender + font.descender - 2
-        (placeholder as NSString).draw(at: NSPoint(x: origin.x + padding, y: max(origin.y, top)), withAttributes: attributes)
+        var size = (typingAttributes[.font] as? NSFont)?.pointSize ?? theme.bodySize
+        // A character on the caret's line: the one before it, or (on an empty line) its own newline.
+        let anchor: Int? = if location > 0, text.character(at: location - 1) != 10 { location - 1 }
+            else if location < text.length { location }
+            else { nil }
+        let baseline: CGFloat
+        if let anchor {
+            let glyph = layoutManager.glyphIndexForCharacter(at: anchor)
+            let line = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            baseline = origin.y + line.minY + layoutManager.location(forGlyphAt: glyph).y
+            if let used = textStorage?.attribute(.font, at: anchor, effectiveRange: nil) as? NSFont, used.pointSize >= 8 {
+                size = used.pointSize
+            }
+        } else {
+            // The empty last line has no glyph; the layout manager keeps its box as the extra line fragment.
+            let extra = layoutManager.extraLineFragmentUsedRect
+            guard extra.height > 0 else { return rect }
+            baseline = origin.y + extra.minY + ConcealingLayoutManager.baselineOffset(lineHeight: extra.height, fontSize: size)
+        }
+        // The system font of that size, like the layout: CJK characters carry a fallback font with other metrics.
+        let font = NSFont.systemFont(ofSize: size)
+        let top = max(baseline - font.ascender, rect.minY)
+        let height = min(baseline - font.descender, rect.maxY) - top
+        guard height > 0 else { return rect }
+        return backingAlignedRect(NSRect(x: rect.minX, y: top, width: rect.width, height: height), options: .alignAllEdgesNearest)
     }
 
     /// Ranges currently marked as search matches; cleared by the next edit.
     public private(set) var highlightedRanges: [NSRange] = []
+
+    /// Watches the scroll view's visible area (see `viewDidMoveToSuperview`).
+    private var clipObserver: NSObjectProtocol?
 
     /// The text width the picture lines were sized for; nil when the note shows no pictures.
     private var imageLayoutWidth: CGFloat?
@@ -242,6 +286,13 @@ public final class MarkdownTextView: NSTextView {
             result.decorations.contains { if case .table(let layout) = $0 { layout.range.location == location } else { false } }
         }
         if range.length > 0 {
+            // An edited list item's source prefix hangs in the gutter; a wide one (a task's "- [ ] ") is tightened.
+            for run in result.runs {
+                guard let prefix = run.style.hangingPrefix, let depth = run.style.listDepth,
+                      let kern = theme.hangingPrefixKern(prefix, depth: depth) else { continue }
+                let prefixRange = NSIntersectionRange(NSRange(location: run.range.location, length: (prefix as NSString).length), range)
+                if prefixRange.length > 0 { storage.addAttribute(.kern, value: kern, range: prefixRange) }
+            }
             slantItalicCJK(in: range, storage: storage)
             spaceOutTagPills(result.decorations, in: range, storage: storage)
         }
@@ -251,7 +302,14 @@ public final class MarkdownTextView: NSTextView {
         storage.endEditing()
         if range.length > 0 {
             concealingLayoutManager.invalidateGlyphs(forCharacterRange: range, changeInLength: 0, actualCharacterRange: nil)
-            concealingLayoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+            // Layout restarts on the line before the range. When typesetting starts right at a line that is
+            // hidden together with its line break (a code fence, a table's delimiter row), TextKit breaks that
+            // line one glyph late: the first visible character joins the hidden line and seems to vanish.
+            let text = string as NSString
+            let layoutStart = range.location > 0 ? text.lineRange(for: NSRange(location: range.location - 1, length: 0)).location : 0
+            concealingLayoutManager.invalidateLayout(
+                forCharacterRange: NSRange(location: layoutStart, length: NSMaxRange(range) - layoutStart), actualCharacterRange: nil
+            )
         }
         decorations = result.decorations
         concealingLayoutManager.decorations = result.decorations
@@ -275,9 +333,12 @@ public final class MarkdownTextView: NSTextView {
         for index in changed where index < blocks.count {
             union = union.map { NSUnionRange($0, blocks[index].range) } ?? blocks[index].range
         }
-        guard let union else { return }
-        lastInvalidatedRange = union
+        guard var union else { return }
         let text = string as NSString
+        // Whole paragraphs: paragraph attributes come from a paragraph's first character, which can lie before
+        // the block (a nested list item's indentation).
+        union = text.paragraphRange(for: union)
+        lastInvalidatedRange = union
         let result = MarkdownStyler.style(blocks: blocks, text: text, active: activeBlocks, concealAll: false, resolveImage: imageExists)
         apply(result, in: union)
         regionSignatures = makeSignatures(text: text)
@@ -408,7 +469,9 @@ public final class MarkdownTextView: NSTextView {
             NSWorkspace.shared.open(url)
             return
         }
+        // Returns once the button is released; markers wait until then (see `setSelectedRanges`).
         super.mouseDown(with: event)
+        updateActiveBlocks()
     }
 
     // The pointing hand shows over links only while ⌘ is held.
@@ -510,9 +573,22 @@ public final class MarkdownTextView: NSTextView {
 
     /// A pill reaches a few points past its text on both sides, more than a space is wide; widening the space after
     /// a tag keeps two neighbouring pills apart.
+    /// How far a tag pill reaches past its text on each side (see `ConcealingLayoutManager`).
+    nonisolated static let tagPillInset: CGFloat = 4
+
     private func spaceOutTagPills(_ decorations: [Decoration], in range: NSRange, storage: NSTextStorage) {
         let text = string as NSString
         for case .tagPill(let tag) in decorations where NSLocationInRange(NSMaxRange(tag), range) {
+            // A pill reaches 4 pt left of its text; at the start of a paragraph that would stick out of the
+            // column, so the first line moves in by as much and the pill lines up with the text below.
+            if tag.location == 0 || text.character(at: tag.location - 1) == 0x0A,
+               NSLocationInRange(tag.location, range),
+               let style = storage.attribute(.paragraphStyle, at: tag.location, effectiveRange: nil) as? NSParagraphStyle {
+                let indented = style.mutableCopy() as! NSMutableParagraphStyle
+                indented.firstLineHeadIndent = style.firstLineHeadIndent + Self.tagPillInset
+                let paragraph = NSIntersectionRange(text.paragraphRange(for: NSRange(location: tag.location, length: 0)), range)
+                storage.addAttribute(.paragraphStyle, value: indented, range: paragraph)
+            }
             let after = NSMaxRange(tag)
             guard after < text.length, text.character(at: after) == 0x20 else { continue }
             storage.addAttribute(.kern, value: 6, range: NSRange(location: after, length: 1))
@@ -716,30 +792,30 @@ public final class MarkdownTextView: NSTextView {
     // MARK: Layout
 
     /// Sizes the text column to the window (see `EditorTheme.horizontalInset`), 56 pt above the first line.
-    /// The bottom padding (40% of the visible height) lives in the scroll view's content insets, because
-    /// `textContainerInset` is symmetric.
+    /// The room below the last line (40% of the visible height) is added to the frame in `setFrameSize`.
     private func updateLayoutInsets() {
         let horizontal = fixedHorizontalInset ?? theme.horizontalInset(forWidth: bounds.width)
         let inset = NSSize(width: horizontal, height: 56)
         if textContainerInset != inset { textContainerInset = inset }
-        if let scrollView = enclosingScrollView {
-            scrollView.automaticallyAdjustsContentInsets = false
-            let bottom = (scrollView.contentView.bounds.height * 0.4).rounded(.down)
-            if scrollView.contentInsets.bottom != bottom { scrollView.contentInsets.bottom = bottom }
-        }
+        enclosingScrollView?.automaticallyAdjustsContentInsets = false
     }
 
     public override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
+        var size = newSize
+        // At least the visible height, plus room to scroll the last line up to the upper part of the pane. The
+        // room belongs to the text view, not to the scroll view's content insets: on macOS 26 the inset area is
+        // covered by a background layer of the scroll view that takes the clicks meant for the text above it.
+        if isVerticallyResizable, let clip = superview as? NSClipView, let layoutManager, let textContainer {
+            let natural = layoutManager.usedRect(for: textContainer).height + 2 * textContainerInset.height
+            let overscroll = (clip.bounds.height * 0.4).rounded(.down)
+            size.height = max(natural + overscroll, clip.bounds.height)
+        }
+        super.setFrameSize(size)
         updateLayoutInsets()
         // Picture lines are as tall as the pictures, which depend on the text width.
         if let sized = imageLayoutWidth, abs(sized - textWidth) > 1 { restyleAll() }
     }
 
-    public override func viewDidMoveToSuperview() {
-        super.viewDidMoveToSuperview()
-        updateLayoutInsets()
-    }
 
     // MARK: NSTextView overrides
 
@@ -762,9 +838,30 @@ public final class MarkdownTextView: NSTextView {
         onTextChange?(string)
     }
 
+    /// Keeps the height rule in `setFrameSize` when the visible area changes (the window is resized) while the
+    /// text does not.
+    public override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        updateLayoutInsets()
+        if let clipObserver { NotificationCenter.default.removeObserver(clipObserver) }
+        clipObserver = nil
+        guard let clip = superview as? NSClipView else { return }
+        clip.postsFrameChangedNotifications = true
+        // No queue: run right away, while the views are being resized.
+        clipObserver = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: clip, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.setFrameSize(self.frame.size)
+            }
+        }
+        setFrameSize(frame.size)
+    }
+
     public override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting stillSelectingFlag: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelectingFlag)
-        updateActiveBlocks()
+        // Not while the mouse is still down: revealing a block's markers (a code fence above the click) moves
+        // the text under the pointer, and AppKit turns the click into a selection up to wherever it now points.
+        if !stillSelectingFlag { updateActiveBlocks() }
     }
 }
 

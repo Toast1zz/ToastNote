@@ -52,11 +52,16 @@ import Testing
             let size = theme.headingSize(level)
             return (style.paragraphSpacingBefore / size, style.paragraphSpacing / size)
         }
-        #expect(spacing(1) == (1.2, 0.4))
-        #expect(spacing(2) == (1.1, 0.35))
-        #expect(spacing(3) == (1.0, 0.3))
-        #expect(spacing(4) == (0.9, 0.25))
-        #expect(spacing(6) == (0.9, 0.25))
+        // The gap in front comes from the blank line before the heading, never from the heading itself.
+        #expect(spacing(1) == (0, 0.4))
+        #expect(spacing(2) == (0, 0.35))
+        #expect(spacing(3) == (0, 0.3))
+        #expect(spacing(4) == (0, 0.25))
+        #expect(spacing(6) == (0, 0.25))
+        #expect(theme.headingSpacing(1).before == 1.2)
+        #expect(theme.headingSpacing(2).before == 1.1)
+        #expect(theme.headingSpacing(3).before == 1.0)
+        #expect(theme.headingSpacing(4).before == 0.9)
     }
 
     @Test func bodyParagraphSpacingAndIndents() {

@@ -105,9 +105,12 @@ public enum EditingCommands {
         guard let item = listLine(line), caret >= start + item.contentStart else { return nil }
 
         if item.isEmpty, caret == contentsEnd {
-            // Return on an empty item leaves the list.
+            // Return on an empty item leaves the list. A blank line goes in front of the caret: a line right after
+            // an item would continue that item (a Markdown "lazy continuation"), not start a paragraph.
             let range = NSRange(location: start, length: contentsEnd - start)
-            return TextEdit(range: range, replacement: "", selectionAfter: NSRange(location: start, length: 0))
+            let afterBlankLine = start == 1 || (start >= 2 && text.character(at: start - 2) == 0x0A)
+            let separator = start > 0 && !afterBlankLine ? "\n" : ""
+            return TextEdit(range: range, replacement: separator, selectionAfter: NSRange(location: start + (separator as NSString).length, length: 0))
         }
         let insertion = "\n" + item.indent + nextMarker(item.marker) + " " + (item.task ? "[ ] " : "")
         return TextEdit(

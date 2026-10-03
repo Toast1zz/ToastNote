@@ -93,8 +93,17 @@ private func apply(_ edit: TextEdit, to text: String) -> String {
     @Test func emptyItemExitsList() throws {
         let text = "- a\n- "
         let edit = try #require(EditingCommands.newline(text: text as NSString, caret: 6))
-        #expect(apply(edit, to: text) == "- a\n")
-        #expect(edit.selectionAfter == r(4, 0))
+        // A blank line ends the list; text typed next is a paragraph, not a continuation of "a".
+        #expect(apply(edit, to: text) == "- a\n\n")
+        #expect(edit.selectionAfter == r(5, 0))
+        #expect(BlockParser.parse(apply(edit, to: text) + "正文").last.map { if case .paragraph = $0.kind { true } else { false } } == true)
+    }
+
+    @Test func emptyItemAfterABlankLineAddsNoSecondOne() throws {
+        for text in ["\n- ", "a\n\n- "] {
+            let edit = try #require(EditingCommands.newline(text: text as NSString, caret: (text as NSString).length))
+            #expect(apply(edit, to: text) == String(text.dropLast(2)))
+        }
     }
 
     @Test func emptyTaskItemExitsList() throws {

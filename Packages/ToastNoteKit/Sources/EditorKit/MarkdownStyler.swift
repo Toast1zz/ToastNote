@@ -166,6 +166,7 @@ public enum MarkdownStyler {
         // often a marker, so the base style covers the whole block, not just its visible content.
         var listDepth: Int?
         var isListItem = false
+        var hangingPrefix: String?
         var runRange = block.range
         if case .listItem(_, _, let depth) = block.kind {
             isListItem = true
@@ -173,15 +174,29 @@ public enum MarkdownStyler {
             // indentation joins the block run so the paragraph style starts at the line's first character.
             let lead = leadingWhitespace(before: block.range.location, in: text)
             runRange = NSRange(location: lead.location, length: NSMaxRange(block.range) - lead.location)
-            listDepth = isActive ? 0 : depth
+            listDepth = depth
             if !isActive, lead.length > 0 { result.hidden.append(lead) }
+            // While edited, the source indentation and marker hang in the gutter: the text does not move.
+            if isActive, block.contentRange.location >= lead.location {
+                hangingPrefix = text.substring(with: NSRange(location: lead.location, length: block.contentRange.location - lead.location))
+            }
         }
-        let blockStyle = TextStyle(role: base, listDepth: listDepth, tightSpacing: isListItem)
+        let blockStyle = TextStyle(role: base, listDepth: listDepth, tightSpacing: isListItem, hangingPrefix: hangingPrefix)
         if runRange.length > 0 {
             result.runs.append(StyleRun(range: runRange, style: blockStyle))
         }
         for segment in contentSegments(of: block) where segment.length > 0 {
             result.runs.append(StyleRun(range: segment, style: blockStyle))
+        }
+        if case .quote = block.kind {
+            // The lines of one quote sit together; only the last keeps the gap after the quote. (While hidden,
+            // a line's "> " rides on the line before and swallows the gap anyway, so this also keeps the text
+            // from moving when the caret enters the quote.)
+            let lastLine = text.lineRange(for: NSRange(location: max(NSMaxRange(block.range) - 1, block.range.location), length: 0)).location
+            if lastLine > block.range.location {
+                let leading = NSRange(location: block.range.location, length: lastLine - block.range.location)
+                result.runs.append(StyleRun(range: leading, style: TextStyle(role: base, tightSpacing: true)))
+            }
         }
 
         emitBlockSyntax(block, text: text, isActive: isActive, into: &result)
