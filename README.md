@@ -36,7 +36,7 @@ xcodebuild -project ToastNote.xcodeproj -scheme ToastNote -configuration Debug -
 bash scripts/build-dmg.sh
 ```
 
-Generate a test library with 1,000 notes: `bash scripts/make-test-vault.sh /tmp/tn-vault 1000`. Generate the app icon with `swift scripts/make-app-icon.swift App/Resources/Assets.xcassets/AppIcon.appiconset`.
+Generate a test library with 1,000 notes: `bash scripts/make-test-vault.sh /tmp/tn-vault 1000`. The app icon master is `docs/AppIcon-master.png` (1024×1024); the sizes in `AppIcon.appiconset` are scaled from it.
 
 Design specifications are in `docs/superpowers/specs/`, implementation plans in `docs/superpowers/plans/`, and performance notes in `docs/perf-log.md`.
 
